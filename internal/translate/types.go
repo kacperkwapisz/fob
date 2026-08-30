@@ -22,6 +22,7 @@ type StreamState struct {
 	CompletionTokens int64
 	CacheRead        int64
 	CacheWrite       int64
+	RoutedModel      string
 }
 
 func EmptyStreamState() StreamState {

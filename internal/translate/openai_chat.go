@@ -347,6 +347,7 @@ func claudeStreamToOpenaiChat(model string, _ any, chunk any, state *StreamState
 
 func grokStreamToOpenaiChat(model string, _ any, chunk any, state *StreamState) []string {
 	c := AsMap(chunk)
+	captureUsage(state, c["usage"])
 	if c["choices"] != nil {
 		out := cloneMap(c)
 		out["model"] = model
@@ -356,6 +357,32 @@ func grokStreamToOpenaiChat(model string, _ any, chunk any, state *StreamState) 
 		return []string{chunkLine(out)}
 	}
 	return nil
+}
+
+func captureUsage(state *StreamState, raw any) {
+	if state == nil {
+		return
+	}
+	u := AsMap(raw)
+	if len(u) == 0 {
+		return
+	}
+	if n, ok := AsNum(u["prompt_tokens"]); ok {
+		state.PromptTokens = int64(n)
+	}
+	if n, ok := AsNum(u["completion_tokens"]); ok {
+		state.CompletionTokens = int64(n)
+	}
+	details := AsMap(u["prompt_tokens_details"])
+	if n, ok := AsNum(details["cached_tokens"]); ok {
+		state.CacheRead = int64(n)
+	}
+	if n, ok := AsNum(details["cache_write_tokens"]); ok {
+		state.CacheWrite = int64(n)
+	}
+	if routed := AsStr(u["routed_model"]); routed != "" {
+		state.RoutedModel = routed
+	}
 }
 
 func codexStreamToOpenaiChat(model string, _ any, chunk any, state *StreamState) []string {

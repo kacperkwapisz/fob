@@ -64,6 +64,8 @@ message AgentRunRequest {
   optional string custom_system_prompt = 8;
 
   optional RequestedModel requested_model = 9;
+
+  optional bool client_supports_routed_model_update = 28;
 }
 
 message AgentServerMessage {
@@ -1691,7 +1693,13 @@ message InteractionUpdate {
     StepStartedUpdate step_started = 16;
 
     StepCompletedUpdate step_completed = 17;
+
+    RoutedModelUpdate routed_model = 24;
   }
+}
+
+message RoutedModelUpdate {
+  string display_name = 1;
 }
 
 message InvocationContext {

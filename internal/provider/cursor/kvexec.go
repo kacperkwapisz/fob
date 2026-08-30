@@ -27,6 +27,7 @@ type streamProtoState struct {
 	turnEnded          bool
 	terminalCheckpoint bool
 	turnUsage          *turnUsage
+	routedID           string
 }
 
 type turnUsage struct {
@@ -204,6 +205,11 @@ func processServer(
 			state.turnEnded = true
 			state.turnUsage = readTurnUsage(te)
 		}
+		if rm := upd.GetRoutedModel(); rm != nil {
+			if id := pricedRoutedID(rm.GetDisplayName()); id != "" {
+				state.routedID = id
+			}
+		}
 		return
 	}
 	if kv := msg.GetKvServerMessage(); kv != nil {
@@ -290,26 +296,32 @@ func consumeVarint(b []byte) (uint64, int) {
 }
 
 func computeUsage(state *streamProtoState) map[string]any {
+	var out map[string]any
 	if state.turnUsage != nil {
 		u := state.turnUsage
 		prompt := u.input + u.cacheRead + u.cacheWrite
 		completion := u.output + u.reasoning
-		return map[string]any{
+		out = map[string]any{
 			"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": prompt + completion,
 			"prompt_tokens_details":     map[string]any{"cached_tokens": u.cacheRead, "cache_write_tokens": u.cacheWrite},
 			"completion_tokens_details": map[string]any{"reasoning_tokens": u.reasoning},
 		}
+	} else {
+		completion := state.outputTokens
+		total := state.totalTokens
+		if total == 0 {
+			total = completion
+		}
+		prompt := total - completion
+		if prompt < 0 {
+			prompt = 0
+		}
+		out = map[string]any{"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": total}
 	}
-	completion := state.outputTokens
-	total := state.totalTokens
-	if total == 0 {
-		total = completion
+	if state != nil && state.routedID != "" {
+		out["routed_model"] = state.routedID
 	}
-	prompt := total - completion
-	if prompt < 0 {
-		prompt = 0
-	}
-	return map[string]any{"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": total}
+	return out
 }
 
 func sendMcpResult(bridge *Bridge, exec pendingExec, content string) {

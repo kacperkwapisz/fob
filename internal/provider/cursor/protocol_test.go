@@ -103,6 +103,212 @@ func TestRunCursorChatScripted(t *testing.T) {
 	_ = translate.AsMap
 }
 
+func TestRunCursorChatConnectEndThenClose(t *testing.T) {
+	t.Setenv("CURSOR_AGENT_URL", "https://agentn.test.cursor.sh")
+	SetBridgeFactoryForTests(func(_, _, _ string, _ bool, _ ClientKind) *Bridge {
+		var onData func([]byte)
+		var onClose func(int)
+		alive := true
+		return &Bridge{
+			Write: func(frame []byte) {
+				if len(frame) < 5 {
+					return
+				}
+				var msg agentpb.AgentClientMessage
+				if err := proto.Unmarshal(frame[5:], &msg); err == nil && msg.GetRunRequest() != nil && onData != nil {
+					go func() {
+						onData(frameConnect([]byte(`{"error":{"code":"not_found","message":"Error"}}`), connectEndStreamFlag))
+						if onClose != nil {
+							onClose(0)
+						}
+					}()
+				}
+			},
+			End:     func() { alive = false },
+			OnData:  func(cb func([]byte)) { onData = cb },
+			OnClose: func(cb func(int)) { onClose = cb },
+			Alive:   func() bool { return alive },
+		}
+	})
+	defer SetBridgeFactoryForTests(nil)
+	defer CleanupAllSessionState()
+
+	stream, err := RunChat(context.Background(), "tok", map[string]any{
+		"model": "cursor-auto", "messages": []any{map[string]any{"role": "user", "content": "hi"}}, "stream": true,
+	}, true, ClientCLI)
+	if err != nil || stream.Stream == nil {
+		t.Fatalf("%+v %v", stream, err)
+	}
+	for range stream.Stream {
+	}
+
+	result, err := RunChat(context.Background(), "tok", map[string]any{
+		"model": "cursor-auto", "messages": []any{map[string]any{"role": "user", "content": "hi"}}, "stream": false,
+	}, false, ClientCLI)
+	if err != nil || result.Status != 200 {
+		t.Fatalf("%+v %v", result, err)
+	}
+	body := translate.AsMap(result.Body)
+	choice := translate.AsMap(translate.AsArr(body["choices"])[0])
+	msg := translate.AsMap(choice["message"])
+	if !containsStr(translate.AsStr(msg["content"]), "not_found") {
+		t.Fatalf("%+v", result.Body)
+	}
+}
+
+func TestResolveCursorAutoWireID(t *testing.T) {
+	if got := resolveModelID("cursor-auto", ""); got != "default" {
+		t.Fatalf("got %s", got)
+	}
+}
+
+func TestBuildCursorRequestAutoUsesRequestedModel(t *testing.T) {
+	payload := buildCursorRequest("default", "", "hi", nil, "c1", nil, nil, nil, nil, false, nil)
+	var msg agentpb.AgentClientMessage
+	if err := proto.Unmarshal(payload.requestBytes, &msg); err != nil {
+		t.Fatal(err)
+	}
+	run := msg.GetRunRequest()
+	if run == nil || !run.GetClientSupportsRoutedModelUpdate() {
+		t.Fatalf("%+v", run)
+	}
+	if run.GetRequestedModel() == nil || run.GetRequestedModel().GetModelId() != "default" {
+		t.Fatalf("requested=%+v details=%+v", run.GetRequestedModel(), run.GetModelDetails())
+	}
+	if run.GetModelDetails() != nil {
+		t.Fatalf("auto must not send modelDetails")
+	}
+}
+
+func TestComputeUsageIncludesRoutedModel(t *testing.T) {
+	usage := computeUsage(&streamProtoState{
+		turnUsage: &turnUsage{input: 10, output: 2, cacheRead: 3},
+		routedID:  "composer-2.5",
+	})
+	if translate.AsStr(usage["routed_model"]) != "composer-2.5" {
+		t.Fatalf("%+v", usage)
+	}
+	if n, _ := usage["prompt_tokens"].(int); n != 13 {
+		t.Fatalf("%+v", usage)
+	}
+}
+
+func TestProcessServerCapturesRoutedModel(t *testing.T) {
+	state := &streamProtoState{}
+	processServer(&agentpb.AgentServerMessage{
+		Message: &agentpb.AgentServerMessage_InteractionUpdate{
+			InteractionUpdate: &agentpb.InteractionUpdate{
+				Message: &agentpb.InteractionUpdate_RoutedModel{
+					RoutedModel: &agentpb.RoutedModelUpdate{DisplayName: "Composer 2.5"},
+				},
+			},
+		},
+	}, nil, nil, nil, state, nil, nil, nil, nil)
+	if state.routedID != "composer-2.5" {
+		t.Fatalf("routedID=%q", state.routedID)
+	}
+	processServer(&agentpb.AgentServerMessage{
+		Message: &agentpb.AgentServerMessage_InteractionUpdate{
+			InteractionUpdate: &agentpb.InteractionUpdate{
+				Message: &agentpb.InteractionUpdate_RoutedModel{
+					RoutedModel: &agentpb.RoutedModelUpdate{DisplayName: "Auto (default)"},
+				},
+			},
+		},
+	}, nil, nil, nil, state, nil, nil, nil, nil)
+	if state.routedID != "composer-2.5" {
+		t.Fatalf("auto must not replace routedID=%q", state.routedID)
+	}
+}
+
+func TestCollectNonStreamSkipsEmptyChoices(t *testing.T) {
+	result := collectNonStream("chatcmpl-x", 1, "composer-2.5", []map[string]any{
+		{
+			"id": "chatcmpl-x", "object": "chat.completion.chunk", "created": int64(1), "model": "composer-2.5",
+			"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"content": "OK"}, "finish_reason": nil}},
+		},
+		{
+			"id": "chatcmpl-x", "object": "chat.completion.chunk", "created": int64(1), "model": "composer-2.5",
+			"choices": []any{},
+			"usage":   map[string]any{"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+		},
+	}, &streamProtoState{})
+	if result.Status != 200 {
+		t.Fatalf("%+v", result)
+	}
+	body := translate.AsMap(result.Body)
+	choice := translate.AsMap(translate.AsArr(body["choices"])[0])
+	msg := translate.AsMap(choice["message"])
+	if translate.AsStr(msg["content"]) != "OK" {
+		t.Fatalf("%+v", result.Body)
+	}
+	if translate.AsStr(choice["finish_reason"]) != "stop" {
+		t.Fatalf("%+v", result.Body)
+	}
+}
+
+func TestRunCursorChatNonStream(t *testing.T) {
+	t.Setenv("CURSOR_AGENT_URL", "https://agentn.test.cursor.sh")
+	SetBridgeFactoryForTests(func(_, _, _ string, _ bool, _ ClientKind) *Bridge {
+		var onData func([]byte)
+		var onClose func(int)
+		alive := true
+		return &Bridge{
+			Write: func(frame []byte) {
+				if len(frame) < 5 {
+					return
+				}
+				var msg agentpb.AgentClientMessage
+				if err := proto.Unmarshal(frame[5:], &msg); err == nil && msg.GetRunRequest() != nil && onData != nil {
+					go func() {
+						onData(frameConnect(mustMarshal(&agentpb.AgentServerMessage{
+							Message: &agentpb.AgentServerMessage_InteractionUpdate{
+								InteractionUpdate: &agentpb.InteractionUpdate{
+									Message: &agentpb.InteractionUpdate_TextDelta{TextDelta: &agentpb.TextDeltaUpdate{Text: "OK"}},
+								},
+							},
+						}), 0))
+						onData(frameConnect(mustMarshal(&agentpb.AgentServerMessage{
+							Message: &agentpb.AgentServerMessage_InteractionUpdate{
+								InteractionUpdate: &agentpb.InteractionUpdate{
+									Message: &agentpb.InteractionUpdate_TurnEnded{TurnEnded: &agentpb.TurnEndedUpdate{}},
+								},
+							},
+						}), 0))
+						onData(frameConnect(mustMarshal(&agentpb.AgentServerMessage{
+							Message: &agentpb.AgentServerMessage_ConversationCheckpointUpdate{
+								ConversationCheckpointUpdate: &agentpb.ConversationStateStructure{},
+							},
+						}), 0))
+						if onClose != nil {
+							onClose(0)
+						}
+					}()
+				}
+			},
+			End:     func() { alive = false },
+			OnData:  func(cb func([]byte)) { onData = cb },
+			OnClose: func(cb func(int)) { onClose = cb },
+			Alive:   func() bool { return alive },
+		}
+	})
+	defer SetBridgeFactoryForTests(nil)
+	defer CleanupAllSessionState()
+
+	result, err := RunChat(context.Background(), "tok", map[string]any{
+		"model": "composer-2.5", "messages": []any{map[string]any{"role": "user", "content": "hi"}}, "stream": false,
+	}, false, ClientCLI)
+	if err != nil || result.Status != 200 {
+		t.Fatalf("%+v %v", result, err)
+	}
+	body := translate.AsMap(result.Body)
+	choice := translate.AsMap(translate.AsArr(body["choices"])[0])
+	msg := translate.AsMap(choice["message"])
+	if translate.AsStr(msg["content"]) != "OK" {
+		t.Fatalf("%+v", result.Body)
+	}
+}
+
 func mustMarshal(m proto.Message) []byte {
 	b, err := proto.Marshal(m)
 	if err != nil {

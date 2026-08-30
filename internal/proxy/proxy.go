@@ -139,7 +139,7 @@ func Proxy(ctx context.Context, fob *Fob, req Request) (Result, error) {
 				if moreHops {
 					break
 				}
-				record(fob, req, hop.Provider, hop.Model, started, "error", 0, 0, 0, 0)
+				record(fob, req, hop.Provider, hop.Model, started, "error", 0, 0, 0, 0, "")
 				return Result{OK: false, Status: result.Status, Body: result.Body}, nil
 			}
 			sticky.Store(req.Key.ID, cred.ID)
@@ -169,17 +169,17 @@ func Proxy(ctx context.Context, fob *Fob, req Request) (Result, error) {
 					if !state.Finished {
 						status = "error"
 					}
-					record(fob, req, hop.Provider, hop.Model, started, status, state.PromptTokens, state.CompletionTokens, state.CacheRead, state.CacheWrite)
+					record(fob, req, hop.Provider, hop.Model, started, status, state.PromptTokens, state.CompletionTokens, state.CacheRead, state.CacheWrite, state.RoutedModel)
 				}()
 				return Result{OK: true, Status: 200, Stream: out}, nil
 			}
 			body := translate.TranslateResponse(req.Inbound, executor.Format(), hop.Model, req.Body, result.Body)
 			pt, ct, cr, cw := usageFrom(body, result.Body)
-			record(fob, req, hop.Provider, hop.Model, started, "ok", pt, ct, cr, cw)
+			record(fob, req, hop.Provider, hop.Model, started, "ok", pt, ct, cr, cw, routedModel(body, result.Body))
 			return Result{OK: true, Status: 200, Body: body}, nil
 		}
 	}
-	record(fob, req, chain[0].Provider, chain[0].Model, started, "error", 0, 0, 0, 0)
+	record(fob, req, chain[0].Provider, chain[0].Model, started, "error", 0, 0, 0, 0, "")
 	status := lastStatus
 	if status == 0 {
 		if attempted {
@@ -401,19 +401,33 @@ func usageFrom(translated, upstream any) (pt, ct, cr, cw int64) {
 	return
 }
 
-func record(fob *Fob, req Request, providerID domain.ProviderID, model string, started int64, status string, pt, ct, cr, cw int64) {
+func record(fob *Fob, req Request, providerID domain.ProviderID, model string, started int64, status string, pt, ct, cr, cw int64, routed string) {
 	priceProvider := map[domain.ProviderID]string{
 		domain.ProviderClaude: "anthropic",
 		domain.ProviderCodex:  "openai",
 		domain.ProviderGrok:   "xai",
 		domain.ProviderCursor: "cursor",
 	}[providerID]
-	usd := fob.Prices.Estimate(priceProvider, model, pt, ct, cr, cw)
+	meterModel := model
+	if routed != "" {
+		meterModel = routed
+	}
+	usd := fob.Prices.Estimate(priceProvider, meterModel, pt, ct, cr, cw)
 	_ = fob.Usage.Record(domain.UsageEvent{
-		TS: time.Now().UnixMilli(), KeyID: req.Key.ID, Provider: providerID, Model: model, Inbound: req.Inbound,
+		TS: time.Now().UnixMilli(), KeyID: req.Key.ID, Provider: providerID, Model: meterModel, Inbound: req.Inbound,
 		PromptTokens: pt, CompletionTokens: ct, CacheReadTokens: cr, CacheWriteTokens: cw,
 		LatencyMs: time.Now().UnixMilli() - started, Status: status, USD: usd,
 	})
+}
+
+func routedModel(translated, upstream any) string {
+	for _, src := range []any{translated, upstream} {
+		usage := asMap(asMap(src)["usage"])
+		if s, _ := usage["routed_model"].(string); s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 func asMap(v any) map[string]any {

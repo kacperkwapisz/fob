@@ -9,6 +9,36 @@ func TestPublicIDs(t *testing.T) {
 	if PublicID("auto") != "cursor-auto" {
 		t.Fatal("auto")
 	}
+	if WireID("cursor-auto") != "default" || WireID("auto") != "default" || WireID("composer-2.5") != "composer-2.5" {
+		t.Fatal("wire")
+	}
+}
+
+func TestLookupWireID(t *testing.T) {
+	if LookupWireID("Composer 2.5") != "composer-2.5" {
+		t.Fatal(LookupWireID("Composer 2.5"))
+	}
+	if LookupWireID("composer-2.5-fast") != "composer-2.5-fast" {
+		t.Fatal(LookupWireID("composer-2.5-fast"))
+	}
+	if LookupWireID("Auto (default)") != "auto" {
+		t.Fatal(LookupWireID("Auto (default)"))
+	}
+	if LookupWireID("not-a-model") != "" {
+		t.Fatal(LookupWireID("not-a-model"))
+	}
+}
+
+func TestPricedRoutedID(t *testing.T) {
+	if pricedRoutedID("Composer 2.5") != "composer-2.5" {
+		t.Fatal(pricedRoutedID("Composer 2.5"))
+	}
+	if pricedRoutedID("Auto (default)") != "" || pricedRoutedID("cursor-auto") != "" {
+		t.Fatal("auto must not price")
+	}
+	if pricedRoutedID("mystery-router") != "mystery-router" {
+		t.Fatal(pricedRoutedID("mystery-router"))
+	}
 }
 
 func TestStripPrefix(t *testing.T) {

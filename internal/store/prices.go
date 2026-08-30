@@ -53,24 +53,48 @@ func (s *PriceStore) seedFromSnapshot() error {
 	if err := s.db.SQL.QueryRow(`SELECT COUNT(*) FROM prices`).Scan(&n); err != nil {
 		return err
 	}
-	if n > 0 {
-		return nil
+	if n == 0 {
+		merged := map[string]PriceCatalog{}
+		if err := json.Unmarshal(prices.APIJSON, &merged); err != nil {
+			return err
+		}
+		if err := s.upsertCatalog(merged, nowMs()); err != nil {
+			return err
+		}
 	}
-	merged := map[string]PriceCatalog{}
-	if err := json.Unmarshal(prices.APIJSON, &merged); err != nil {
-		return err
-	}
+	return s.upsertCursorOverlay()
+}
+
+func (s *PriceStore) upsertCursorOverlay() error {
 	cursor := map[string]PriceCatalog{}
 	if err := json.Unmarshal(prices.CursorJSON, &cursor); err != nil {
 		return err
 	}
-	for k, v := range cursor {
-		merged[k] = v
+	if err := s.upsertCatalog(cursor, nowMs()); err != nil {
+		return err
 	}
-	return s.upsertCatalog(merged, nowMs())
+	_, err := s.db.SQL.Exec(`DELETE FROM prices WHERE provider = 'cursor' AND model IN ('cursor-auto', 'auto', 'default')`)
+	return err
 }
 
 func (s *PriceStore) Get(provider, model string) *domain.ModelPrice {
+	if provider == "cursor" && isCursorAuto(model) {
+		return nil
+	}
+	if p := s.lookup(provider, model); p != nil {
+		return p
+	}
+	if provider == "cursor" {
+		for _, alt := range []string{"anthropic", "openai", "xai"} {
+			if p := s.lookup(alt, model); p != nil {
+				return p
+			}
+		}
+	}
+	return nil
+}
+
+func (s *PriceStore) lookup(provider, model string) *domain.ModelPrice {
 	row := s.db.SQL.QueryRow(`SELECT provider, model, input, output, cache_read, cache_write FROM prices WHERE provider = ? AND model = ?`, provider, model)
 	if p, err := scanPrice(row); err == nil {
 		return &p
@@ -132,6 +156,9 @@ func (s *PriceStore) Refresh(force bool) string {
 	if err := s.upsertCatalog(data, now); err != nil {
 		return "failed"
 	}
+	if err := s.upsertCursorOverlay(); err != nil {
+		return "failed"
+	}
 	s.lastFetch = now
 	return "ok"
 }
@@ -173,6 +200,15 @@ func (s *PriceStore) upsertCatalog(data map[string]PriceCatalog, fetchedAt int64
 		}
 	}
 	return tx.Commit()
+}
+
+func isCursorAuto(model string) bool {
+	switch model {
+	case "cursor-auto", "auto", "default":
+		return true
+	default:
+		return false
+	}
 }
 
 func scanPrice(row rowScanner) (domain.ModelPrice, error) {

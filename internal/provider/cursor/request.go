@@ -248,11 +248,13 @@ func buildCursorRequest(
 		action.Action = &agentpb.ConversationAction_UserMessageAction{UserMessageAction: &agentpb.UserMessageAction{UserMessage: userMessage}}
 	}
 
+	supportsRouted := true
 	run := &agentpb.AgentRunRequest{
-		ConversationState: state,
-		Action:            action,
-		McpTools:          &agentpb.McpTools{McpTools: mcpTools},
-		ConversationId:    proto.String(conversationID),
+		ConversationState:               state,
+		Action:                          action,
+		McpTools:                        &agentpb.McpTools{McpTools: mcpTools},
+		ConversationId:                  proto.String(conversationID),
+		ClientSupportsRoutedModelUpdate: &supportsRouted,
 	}
 	if selection != nil {
 		var params []*agentpb.RequestedModelModelParameterbytes
@@ -260,6 +262,8 @@ func buildCursorRequest(
 			params = append(params, &agentpb.RequestedModelModelParameterbytes{Id: p.ID, Value: p.Value})
 		}
 		run.RequestedModel = &agentpb.RequestedModel{ModelId: selection.ModelID, MaxMode: selection.MaxMode, Parameters: params}
+	} else if modelID == "default" || modelID == "auto" {
+		run.RequestedModel = &agentpb.RequestedModel{ModelId: "default"}
 	} else {
 		run.ModelDetails = &agentpb.ModelDetails{ModelId: modelID, DisplayModelId: modelID, DisplayName: modelID}
 	}

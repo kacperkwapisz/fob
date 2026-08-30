@@ -29,6 +29,15 @@ func PublicID(wireID string) string {
 	return wireID
 }
 
+func WireID(public string) string {
+	switch public {
+	case "cursor-auto", "auto", "default":
+		return "default"
+	default:
+		return public
+	}
+}
+
 func StripPublicPrefix(id string) string {
 	return strings.TrimPrefix(id, "cursor/")
 }
@@ -407,4 +416,28 @@ func KnownIDs() []string {
 		out[i] = m.ID
 	}
 	return out
+}
+
+func LookupWireID(nameOrID string) string {
+	key := strings.TrimSpace(nameOrID)
+	if key == "" {
+		return ""
+	}
+	for _, m := range snapshot {
+		if m.ID == key || strings.EqualFold(m.ID, key) || strings.EqualFold(m.Name, key) {
+			return m.ID
+		}
+	}
+	return ""
+}
+
+func pricedRoutedID(nameOrID string) string {
+	id := LookupWireID(nameOrID)
+	if id == "" {
+		id = strings.TrimSpace(nameOrID)
+	}
+	if id == "" || WireID(id) == "default" {
+		return ""
+	}
+	return id
 }

@@ -74,6 +74,65 @@ func TestClaudeResponseToOpenAIChat(t *testing.T) {
 	}
 }
 
+func TestGrokResponsesToOpenAIChat(t *testing.T) {
+	nowUnixFn = func() int64 { return 1788089810 }
+	defer func() { nowUnixFn = unixNow }()
+	out := TranslateResponse(domain.InboundOpenAIChat, domain.FormatGrok, "grok-4.6", map[string]any{}, map[string]any{
+		"id": "e13c0c81-7de7-925d-afd4-4c51e8fbf45e", "object": "response",
+		"output": []any{
+			map[string]any{"type": "reasoning", "summary": []any{map[string]any{"type": "summary_text", "text": "thinking"}}},
+			map[string]any{"type": "message", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": "Hey, I'm Mark."}}},
+		},
+		"usage": map[string]any{"input_tokens": 283.0, "output_tokens": 846.0},
+	})
+	rec := AsMap(out)
+	if AsStr(rec["object"]) != "chat.completion" {
+		t.Fatalf("%v", rec["object"])
+	}
+	choice := AsMap(AsArr(rec["choices"])[0])
+	msg := AsMap(choice["message"])
+	if AsStr(msg["content"]) != "Hey, I'm Mark." {
+		t.Fatalf("content %+v", msg)
+	}
+	if AsStr(choice["finish_reason"]) != "stop" {
+		t.Fatalf("finish_reason %v", choice["finish_reason"])
+	}
+	if AsStr(msg["reasoning_content"]) != "thinking" {
+		t.Fatalf("reasoning %v", msg["reasoning_content"])
+	}
+	if numOf(AsMap(rec["usage"])["completion_tokens"]) != 846 {
+		t.Fatalf("%+v", rec["usage"])
+	}
+}
+
+func TestGrokStreamToOpenAIChat(t *testing.T) {
+	nowUnixFn = func() int64 { return 1788089810 }
+	defer func() { nowUnixFn = unixNow }()
+	state := EmptyStreamState()
+	start := TranslateStream(domain.InboundOpenAIChat, domain.FormatGrok, "grok-4.6", map[string]any{}, map[string]any{
+		"type": "response.created", "response": map[string]any{"id": "resp_1"},
+	}, &state)
+	if len(start) == 0 || !strings.Contains(start[0], "assistant") {
+		t.Fatalf("%v", start)
+	}
+	delta := TranslateStream(domain.InboundOpenAIChat, domain.FormatGrok, "grok-4.6", map[string]any{}, map[string]any{
+		"type": "response.output_text.delta", "delta": "Hey",
+	}, &state)
+	if len(delta) == 0 || !strings.Contains(delta[0], "Hey") {
+		t.Fatalf("%v", delta)
+	}
+	done := TranslateStream(domain.InboundOpenAIChat, domain.FormatGrok, "grok-4.6", map[string]any{}, map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id": "resp_1", "output": []any{},
+			"usage": map[string]any{"input_tokens": 3.0, "output_tokens": 2.0},
+		},
+	}, &state)
+	if !contains(done, "data: [DONE]") {
+		t.Fatalf("%v", done)
+	}
+}
+
 func TestClaudeStreamToOpenAI(t *testing.T) {
 	nowUnixFn = func() int64 { return 1788089810 }
 	defer func() { nowUnixFn = unixNow }()

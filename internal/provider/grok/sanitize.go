@@ -554,7 +554,7 @@ func supportsReasoningEffort(model string) bool {
 	if i := strings.LastIndex(id, "/"); i >= 0 {
 		id = id[i+1:]
 	}
-	return strings.HasPrefix(id, "grok-3-mini") || strings.HasPrefix(id, "grok-4.20-multi-agent") || strings.HasPrefix(id, "grok-4.3") || strings.HasPrefix(id, "grok-4.5")
+	return strings.HasPrefix(id, "grok-3-mini") || strings.HasPrefix(id, "grok-4.20-multi-agent") || strings.HasPrefix(id, "grok-4.3") || strings.HasPrefix(id, "grok-4.5") || strings.HasPrefix(id, "grok-4.6")
 }
 
 func supportsImageGeneration(model string) bool {

@@ -47,6 +47,13 @@ func TestKeepReasoningOnGrok45(t *testing.T) {
 	}
 }
 
+func TestKeepReasoningOnGrok46(t *testing.T) {
+	out := SanitizeBody(map[string]any{"model": "grok-4.6", "reasoning": map[string]any{"effort": "low"}}, "grok-4.6")
+	if translate.AsStr(translate.AsMap(out["reasoning"])["effort"]) != "low" {
+		t.Fatalf("%+v", out["reasoning"])
+	}
+}
+
 func TestRewriteAgentMessage(t *testing.T) {
 	out := SanitizeBody(map[string]any{
 		"model": "grok-4.5",

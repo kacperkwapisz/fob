@@ -95,7 +95,7 @@ func messagesFromBody(body map[string]any) []OpenAIMessage {
 }
 
 func resolveModelID(model, effort string, fast ...bool) string {
-	base := model
+	base := WireID(model)
 	hasFast := strings.HasSuffix(base, "-fast")
 	if hasFast {
 		base = strings.TrimSuffix(base, "-fast")
@@ -178,7 +178,7 @@ func selectionFromBody(body map[string]any) *requestedModelSelection {
 }
 
 func resolveRequestedModel(model, effort string, fast ...bool) *requestedModelSelection {
-	base := model
+	base := WireID(model)
 	hasFast := strings.HasSuffix(base, "-fast")
 	if hasFast {
 		base = strings.TrimSuffix(base, "-fast")
@@ -312,7 +312,7 @@ func runStream(ctx context.Context, accessToken string, payload requestPayload, 
 	factory := currentFactory()
 	agentURL, err := ResolveAgentURL(ctx, accessToken, client)
 	if err != nil {
-		agentURL = "https://agentn.test.cursor.sh"
+		return ChatResult{Status: 502, Message: err.Error()}, err
 	}
 	bridge := factory(accessToken, "/agent.v1.AgentService/Run", agentURL, false, client)
 	stopHeart := make(chan struct{})
@@ -339,12 +339,29 @@ func runStream(ctx context.Context, accessToken string, payload requestPayload, 
 	var parser frameParser
 	done := make(chan struct{})
 	var once sync.Once
-	finish := func() { once.Do(func() { close(done) }) }
+	var emitMu sync.Mutex
+	finish := func() {
+		once.Do(func() {
+			close(done)
+			emitMu.Lock()
+			if stream {
+				close(out)
+			}
+			emitMu.Unlock()
+		})
+	}
 	mcpSeen := false
 	cancelled := false
 	var latestCheckpoint []byte
 
 	emit := func(delta map[string]any, finishReason any) {
+		emitMu.Lock()
+		defer emitMu.Unlock()
+		select {
+		case <-done:
+			return
+		default:
+		}
 		chunk := map[string]any{
 			"id": completionID, "object": "chat.completion.chunk", "created": created, "model": modelID,
 			"choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": finishReason}},
@@ -355,6 +372,13 @@ func runStream(ctx context.Context, accessToken string, payload requestPayload, 
 		}
 	}
 	emitUsage := func() {
+		emitMu.Lock()
+		defer emitMu.Unlock()
+		select {
+		case <-done:
+			return
+		default:
+		}
 		chunk := map[string]any{
 			"id": completionID, "object": "chat.completion.chunk", "created": created, "model": modelID,
 			"choices": []any{}, "usage": computeUsage(state),
@@ -422,7 +446,13 @@ func runStream(ctx context.Context, accessToken string, payload requestPayload, 
 					sessionMu.Unlock()
 					emit(map[string]any{}, "tool_calls")
 					if stream {
-						out <- map[string]any{"done": true}
+						emitMu.Lock()
+						select {
+						case <-done:
+						default:
+							out <- map[string]any{"done": true}
+						}
+						emitMu.Unlock()
 					}
 					finish()
 				},
@@ -487,6 +517,12 @@ func runStream(ctx context.Context, accessToken string, payload requestPayload, 
 			}
 		}
 		sessionMu.Unlock()
+		select {
+		case <-done:
+			finish()
+			return
+		default:
+		}
 		if cancelled || mcpSeen {
 			if mcpSeen && code != 0 {
 				emit(map[string]any{"content": "Bridge connection lost"}, "error")
@@ -525,9 +561,6 @@ func runStream(ctx context.Context, accessToken string, payload requestPayload, 
 			cleanupActive(&activeBridge{bridge: bridge, stopHeart: stopHeart})
 			finish()
 		case <-done:
-		}
-		if stream {
-			close(out)
 		}
 	}()
 
@@ -713,7 +746,11 @@ func collectNonStream(id string, created int64, model string, chunks []map[strin
 	var toolCalls []any
 	finish := "stop"
 	for _, c := range chunks {
-		choice := translate.AsMap(translate.AsArr(c["choices"])[0])
+		choices := translate.AsArr(c["choices"])
+		if len(choices) == 0 {
+			continue
+		}
+		choice := translate.AsMap(choices[0])
 		delta := translate.AsMap(choice["delta"])
 		if s := translate.AsStr(delta["content"]); s != "" {
 			text.WriteString(s)
