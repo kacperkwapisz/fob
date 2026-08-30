@@ -1,0 +1,11 @@
+{
+  "systemPrompt": "terse",
+  "userText": "list files",
+  "turns": [],
+  "toolResults": [
+    {
+      "toolCallId": "c1",
+      "content": "a.ts"
+    }
+  ]
+}

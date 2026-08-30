@@ -1,0 +1,118 @@
+{
+  "chatToClaude": {
+    "model": "claude-opus-4-7",
+    "messages": [
+      {
+        "role": "user",
+        "content": "hi"
+      }
+    ],
+    "stream": false,
+    "max_tokens": 8192,
+    "system": [
+      {
+        "type": "text",
+        "text": "you are terse",
+        "cache_control": {
+          "type": "ephemeral"
+        }
+      }
+    ],
+    "tools": [
+      {
+        "name": "lookup",
+        "description": "",
+        "input_schema": {
+          "type": "object"
+        },
+        "cache_control": {
+          "type": "ephemeral"
+        }
+      }
+    ],
+    "metadata": {
+      "user_id": "sess-1"
+    }
+  },
+  "claudeToGrok": {
+    "model": "grok-4.5",
+    "input": [
+      {
+        "type": "message",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "hi"
+          }
+        ]
+      }
+    ],
+    "stream": false,
+    "instructions": "be brief"
+  },
+  "claudeToChat": {
+    "id": "msg_1",
+    "object": "chat.completion",
+    "created": 1788102728,
+    "model": "claude-opus-4-7",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "hello"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 10,
+      "completion_tokens": 2,
+      "total_tokens": 12
+    }
+  },
+  "streamStart": [
+    "data: {\"id\":\"msg_1\",\"object\":\"chat.completion.chunk\",\"created\":1788102728,\"model\":\"claude-opus-4-7\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}"
+  ],
+  "streamDelta": [
+    "data: {\"id\":\"msg_1\",\"object\":\"chat.completion.chunk\",\"created\":1788102728,\"model\":\"claude-opus-4-7\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":null}]}"
+  ],
+  "streamStop": [
+    "data: [DONE]"
+  ],
+  "chatToCursor": {
+    "model": "composer-2.5",
+    "messages": [
+      {
+        "role": "user",
+        "content": "hi"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "lookup",
+          "parameters": {
+            "type": "object"
+          }
+        }
+      }
+    ]
+  },
+  "claudeToCursor": {
+    "model": "composer-2.5",
+    "messages": [
+      {
+        "role": "system",
+        "content": "be brief"
+      },
+      {
+        "role": "user",
+        "content": "hi"
+      }
+    ],
+    "stream": false
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "nullInstructions": {
+    "instructions": "",
+    "input": [],
+    "store": false,
+    "stream": true,
+    "include": [
+      "reasoning.encrypted_content"
+    ]
+  },
+  "dropParallel": {
+    "instructions": "",
+    "store": false,
+    "stream": true,
+    "include": [
+      "reasoning.encrypted_content"
+    ]
+  },
+  "longId": {
+    "input": [
+      {
+        "type": "message",
+        "id": "msg_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_b112607fa95a3825",
+        "role": "user",
+        "content": "hi"
+      }
+    ],
+    "instructions": "",
+    "store": false,
+    "stream": true,
+    "include": [
+      "reasoning.encrypted_content"
+    ]
+  },
+  "headers": {
+    "Authorization": "Bearer tok",
+    "Accept": "application/json",
+    "Originator": "codex-tui",
+    "User-Agent": "codex-tui/0.146.0 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.146.0)",
+    "ChatGPT-Account-Id": "acct",
+    "Session-Id": "sess",
+    "X-Client-Request-Id": "sess"
+  },
+  "originator": "codex-tui",
+  "userAgent": "codex-tui/0.146.0 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.146.0)"
+}

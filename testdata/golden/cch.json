@@ -1,0 +1,15 @@
+{
+  "simple": {
+    "input": "{\"model\":\"claude-opus-4-7\",\"max_tokens\":128,\"system\":[{\"type\":\"text\",\"text\":\"x-anthropic-billing-header: cc_version=2.1.220.abc; cc_entrypoint=cli; cch=00000;\"}],\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}",
+    "output": "{\"model\":\"claude-opus-4-7\",\"max_tokens\":128,\"system\":[{\"type\":\"text\",\"text\":\"x-anthropic-billing-header: cc_version=2.1.220.abc; cc_entrypoint=cli; cch=8d32f;\"}],\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
+  },
+  "injectFallback": {
+    "input": "{\"model\":\"claude-opus-4-7\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}",
+    "output": "{\"model\":\"claude-opus-4-7\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"system\":[{\"type\":\"text\",\"text\":\"x-anthropic-billing-header: cc_version=2.1.220.abc; cc_entrypoint=cli; cch=d2b6a;\"}]}"
+  },
+  "xxhashSeedKnown": {
+    "seed": "0x4d659218e32a3268",
+    "inputUtf8": "{\"hello\":\"world\"}",
+    "hashHex": "8a219e26ada3a449"
+  }
+}

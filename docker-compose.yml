@@ -1,0 +1,16 @@
+services:
+  fob:
+    build: .
+    image: fob:local
+    ports:
+      - "8317:8317"
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET with openssl rand -hex 32}
+      PORT: "8317"
+      HOST: "0.0.0.0"
+      DATABASE_PATH: /data/fob.sqlite
+    volumes:
+      - fob-data:/data
+
+volumes:
+  fob-data:

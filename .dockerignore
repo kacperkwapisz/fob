@@ -1,0 +1,10 @@
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+/data
+.git
+.env
+.env.*
+/fob
+dist
+testdata

@@ -1,0 +1,11 @@
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+/data
+.DS_Store
+dist
+.env
+.env.*
+/fob
+/.fob/

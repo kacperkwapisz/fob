@@ -1,0 +1,48 @@
+{
+  "flatten": {
+    "model": "grok-4.5",
+    "tools": [
+      {
+        "type": "function",
+        "name": "codex_app__automation_update",
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": true
+        }
+      },
+      {
+        "type": "function",
+        "name": "codex_app__other",
+        "parameters": {
+          "type": "object",
+          "properties": {}
+        }
+      }
+    ]
+  },
+  "grokBuild": {
+    "model": "grok-build-0.1"
+  },
+  "grokKeep": {
+    "model": "grok-4.5",
+    "reasoning": {
+      "effort": "high"
+    }
+  },
+  "agentMessage": {
+    "model": "grok-4.5",
+    "input": [
+      {
+        "type": "message",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "hello"
+          }
+        ],
+        "role": "user"
+      }
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "jwtSecret": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "jwtKeyHex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "sha256SkFob": "6fd2b97aa1444ae3545fb3ed1babc290401fd23c1a3925e4679065a3c9ccd917",
+  "hmacExp": "QIoICFevSvAVG5jjm3JY3jPCzuGWtu5ZU_jZLH2aV-c",
+  "encryptDecrypt": {
+    "blob": "4ygwtkQcsvcqJz86H3FUCbpEPGkJFDcUgOeXC_m0KHLyarLZHGMIpcN2E2SAjRx2xzWuar2e2lvfCcwxQpQzjKnu33Ep4Q",
+    "plain": "{\"accessToken\":\"tok\",\"refreshToken\":\"ref\"}"
+  },
+  "nonHexSecretKeyHex": "c62e4615bd39e222572f3a1bf7c2132ea1e65b17ec805047bd6b2842c593493f"
+}

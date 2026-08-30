@@ -1,0 +1,284 @@
+package app
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+
+	"github.com/kacperkwapisz/fob/internal/domain"
+	"github.com/kacperkwapisz/fob/internal/store"
+)
+
+const secret = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+func TestHealthNoKey(t *testing.T) {
+	booted, err := Create(map[string]string{"JWT_SECRET": secret, "DATABASE_PATH": ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer booted.DB.Close()
+	res := httptest.NewRecorder()
+	booted.Handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if res.Code != 200 {
+		t.Fatalf("status %d", res.Code)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil || body["ok"] != true {
+		t.Fatalf("%s", res.Body.String())
+	}
+}
+
+func TestModelsEmptyArrayNotNull(t *testing.T) {
+	booted, err := Create(map[string]string{"JWT_SECRET": secret, "DATABASE_PATH": ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer booted.DB.Close()
+	created, err := booted.Fob.Keys.Create("t", nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("authorization", "Bearer "+created.Secret)
+	booted.Handler.ServeHTTP(res, req)
+	if res.Code != 200 {
+		t.Fatalf("status %d", res.Code)
+	}
+	body := res.Body.String()
+	if !strings.Contains(body, `"data":[]`) {
+		t.Fatalf("%s", body)
+	}
+	if strings.HasSuffix(body, "\n") {
+		t.Fatalf("trailing newline %q", body)
+	}
+}
+
+func TestModelsUnauthorized(t *testing.T) {
+	booted, err := Create(map[string]string{"JWT_SECRET": secret, "DATABASE_PATH": ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer booted.DB.Close()
+	res := httptest.NewRecorder()
+	booted.Handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/v1/models", nil))
+	if res.Code != 401 {
+		t.Fatalf("status %d", res.Code)
+	}
+}
+
+func TestPanelUnlockHTML(t *testing.T) {
+	booted, err := Create(map[string]string{"JWT_SECRET": secret, "DATABASE_PATH": ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer booted.DB.Close()
+	_, _, _ = booted.Panel.EnsureSeed()
+	res := httptest.NewRecorder()
+	booted.Handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/", nil))
+	if res.Code != 200 {
+		t.Fatalf("status %d", res.Code)
+	}
+	html := res.Body.String()
+	for _, want := range []string{"Fraunces", "/design.css", "Set a password"} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("missing %q in %s", want, html[:min(len(html), 400)])
+		}
+	}
+}
+
+func TestPanelIgnoresQueryNotices(t *testing.T) {
+	booted, err := Create(map[string]string{"JWT_SECRET": secret, "DATABASE_PATH": ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer booted.DB.Close()
+	_, _, _ = booted.Panel.EnsureSeed()
+	res := httptest.NewRecorder()
+	booted.Handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/?error=wrong+password&ok=Connected", nil))
+	html := res.Body.String()
+	if strings.Contains(html, "wrong password") || strings.Contains(html, "Connected") {
+		t.Fatalf("leaked query: %s", html)
+	}
+}
+
+func TestPasswordBadSeedRendersForm(t *testing.T) {
+	booted, err := Create(map[string]string{"JWT_SECRET": secret, "DATABASE_PATH": ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer booted.DB.Close()
+	_, _, _ = booted.Panel.EnsureSeed()
+	res := httptest.NewRecorder()
+	form := url.Values{"old_password": {"nope"}, "new_password": {"long-enough"}}
+	req := httptest.NewRequest(http.MethodPost, "/password", strings.NewReader(form.Encode()))
+	req.Header.Set("content-type", "application/x-www-form-urlencoded")
+	booted.Handler.ServeHTTP(res, req)
+	if res.Code != 200 {
+		t.Fatalf("status %d", res.Code)
+	}
+	if res.Header().Get("location") != "" || res.Header().Get("set-cookie") != "" {
+		t.Fatal("unexpected redirect/cookie")
+	}
+	html := res.Body.String()
+	if !strings.Contains(html, "old password is wrong") || !strings.Contains(html, "Set a password") {
+		t.Fatalf("%s", html)
+	}
+}
+
+func TestMintRedirectsWithoutSecret(t *testing.T) {
+	booted, session := unlocked(t)
+	defer booted.DB.Close()
+	res := httptest.NewRecorder()
+	form := url.Values{"name": {"opencode"}}
+	req := httptest.NewRequest(http.MethodPost, "/keys", strings.NewReader(form.Encode()))
+	req.Header.Set("content-type", "application/x-www-form-urlencoded")
+	req.Header.Set("cookie", session)
+	booted.Handler.ServeHTTP(res, req)
+	if res.Code != 303 || res.Header().Get("location") != "/" {
+		t.Fatalf("status %d loc %s", res.Code, res.Header().Get("location"))
+	}
+	if strings.Contains(res.Header().Get("set-cookie"), "fob_flash") || strings.Contains(res.Body.String(), "sk-fob-") {
+		t.Fatal("leaked secret")
+	}
+	pageRes := httptest.NewRecorder()
+	pageReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	pageReq.Header.Set("cookie", session)
+	booted.Handler.ServeHTTP(pageRes, pageReq)
+	html := pageRes.Body.String()
+	for _, want := range []string{"opencode", "sk-fob-", "Logins", "Keys", "Meter", "Cursor"} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("missing %q", want)
+		}
+	}
+}
+
+func TestAPIPanelKeysReturnsSecretOnce(t *testing.T) {
+	booted, session := unlocked(t)
+	defer booted.DB.Close()
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/panel/keys", strings.NewReader(`{"name":"cursor"}`))
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("cookie", session)
+	booted.Handler.ServeHTTP(res, req)
+	if res.Code != 200 {
+		t.Fatalf("status %d %s", res.Code, res.Body.String())
+	}
+	var body struct {
+		Secret, ID, Name, Prefix string
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Name != "cursor" || !strings.HasPrefix(body.Secret, "sk-fob-") || body.Prefix != body.Secret[:12] || body.ID == "" {
+		t.Fatalf("%+v", body)
+	}
+}
+
+func TestAPIPanelKeysUnauthorized(t *testing.T) {
+	booted, err := Create(map[string]string{"JWT_SECRET": secret, "DATABASE_PATH": ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer booted.DB.Close()
+	_, _, _ = booted.Panel.EnsureSeed()
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/panel/keys", strings.NewReader(`{"name":"cursor"}`))
+	req.Header.Set("content-type", "application/json")
+	booted.Handler.ServeHTTP(res, req)
+	if res.Code != 401 {
+		t.Fatalf("status %d", res.Code)
+	}
+}
+
+func TestDeadPanelJSONGone(t *testing.T) {
+	booted, session := unlocked(t)
+	defer booted.DB.Close()
+	for _, path := range []string{"/api/panel/me", "/api/panel/credentials", "/api/panel/keys", "/api/panel/usage"} {
+		res := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("cookie", session)
+		booted.Handler.ServeHTTP(res, req)
+		if res.Code != 404 {
+			t.Fatalf("%s %d", path, res.Code)
+		}
+	}
+}
+
+func TestConnectedLoginsRenderFromVault(t *testing.T) {
+	booted, session := unlocked(t)
+	defer booted.DB.Close()
+	if _, err := booted.Fob.Vault.Save(store.SaveCredential{
+		Provider: domain.ProviderClaude,
+		Label:    "work claude",
+		Tokens:   domain.CredentialTokens{AccessToken: "at", Extra: map[string]any{}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("cookie", session)
+	booted.Handler.ServeHTTP(res, req)
+	html := res.Body.String()
+	if !strings.Contains(html, "work claude") || strings.Contains(html, "?ok=") {
+		t.Fatalf("%s", html)
+	}
+}
+
+func TestDesignCSS(t *testing.T) {
+	booted, err := Create(map[string]string{"JWT_SECRET": secret, "DATABASE_PATH": ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer booted.DB.Close()
+	res := httptest.NewRecorder()
+	booted.Handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/design.css", nil))
+	if res.Code != 200 {
+		t.Fatal(res.Code)
+	}
+	css := res.Body.String()
+	if !strings.Contains(css, "--accent:") || !strings.Contains(css, "--font-display:") {
+		t.Fatal(css[:200])
+	}
+}
+
+func TestPanelJS(t *testing.T) {
+	booted, err := Create(map[string]string{"JWT_SECRET": secret, "DATABASE_PATH": ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer booted.DB.Close()
+	res := httptest.NewRecorder()
+	booted.Handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/panel.js", nil))
+	if res.Code != 200 || !strings.Contains(res.Body.String(), "/api/panel/keys") {
+		t.Fatal(res.Body.String())
+	}
+}
+
+func unlocked(t *testing.T) (*Booted, string) {
+	t.Helper()
+	booted, err := Create(map[string]string{"JWT_SECRET": secret, "DATABASE_PATH": ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, _, err := booted.Panel.EnsureSeed()
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := httptest.NewRecorder()
+	form := url.Values{"old_password": {seed}, "new_password": {"long-enough"}}
+	req := httptest.NewRequest(http.MethodPost, "/password", strings.NewReader(form.Encode()))
+	req.Header.Set("content-type", "application/x-www-form-urlencoded")
+	booted.Handler.ServeHTTP(res, req)
+	if res.Code != 303 || res.Header().Get("location") != "/" {
+		t.Fatalf("reset %d %s", res.Code, res.Header().Get("location"))
+	}
+	cookie := strings.Split(res.Header().Get("set-cookie"), ";")[0]
+	if !strings.Contains(cookie, "fob_session=") {
+		t.Fatalf("cookie %s", cookie)
+	}
+	return booted, cookie
+}
