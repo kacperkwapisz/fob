@@ -12,7 +12,7 @@ import (
 
 	"github.com/kacperkwapisz/fob/internal/domain"
 	"github.com/kacperkwapisz/fob/internal/env"
-	"github.com/kacperkwapisz/fob/internal/httpx"
+	"github.com/kacperkwapisz/fob/internal/provider"
 )
 
 const ClaudeRedirectURI = "http://localhost:54545/callback"
@@ -78,8 +78,7 @@ func (l *claudeLogin) Complete(ctx context.Context, code, state, _, _ string) (L
 	if err != nil {
 		return LoginResult{}, err
 	}
-	req.Header.Set("content-type", "application/json")
-	res, err := httpx.Client().Do(req)
+	res, err := provider.ClaudeOAuthDo(req)
 	if err != nil {
 		return LoginResult{}, err
 	}

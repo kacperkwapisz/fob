@@ -25,6 +25,7 @@ const (
 	oauthBeta       = "oauth-2025-04-20"
 	redact          = "redact-thinking-2026-02-12"
 	fast            = "fast-mode-2026-02-01"
+	advisorBeta     = "advisor-tool-2026-03-01"
 )
 
 var nativeEntry = map[string]bool{"cli": true, "sdk-cli": true, "claude-vscode": true}
@@ -51,6 +52,8 @@ func PrepareUpstream(body any, accessToken, credentialID, accountID string, inbo
 	}
 	confirmed := detectNative(inbound, body, countTokens)
 	b := translate.AsMap(translate.CloneJSON(body))
+	b = sanitizeClaudeMessages(b)
+	b = sanitizeWebSearchDomains(b)
 	liftMidSystem(b)
 	disableThinkingIfForced(b)
 	normalizeSampling(b, confirmed)
@@ -116,15 +119,19 @@ func header(inbound map[string]string, name string) string {
 }
 
 func claudeBetas(body map[string]any, requested string, countTokens bool) string {
-	if countTokens {
-		return strings.Join([]string{codeBeta, oauthBeta, "interleaved-thinking-2025-05-14", "token-counting-2024-11-01"}, ",")
-	}
 	asked := map[string]bool{}
 	for _, s := range strings.Split(requested, ",") {
 		s = strings.TrimSpace(s)
 		if s != "" {
 			asked[s] = true
 		}
+	}
+	if countTokens {
+		out := []string{codeBeta, oauthBeta, "interleaved-thinking-2025-05-14", "context-management-2025-06-27", "token-counting-2024-11-01"}
+		if asked[advisorBeta] || hasAdvisorTool(body) {
+			out = append(out, advisorBeta)
+		}
+		return strings.Join(out, ",")
 	}
 	out := []string{codeBeta, oauthBeta}
 	if asked["context-1m-2025-08-07"] {
@@ -139,6 +146,9 @@ func claudeBetas(body map[string]any, requested string, countTokens bool) string
 	}
 	if hasRoleSystem(body) {
 		out = append(out, "mid-conversation-system-2026-04-07")
+	}
+	if asked[advisorBeta] || hasAdvisorTool(body) {
+		out = append(out, advisorBeta)
 	}
 	if len(translate.AsArr(body["tools"])) > 0 {
 		out = append(out, "advanced-tool-use-2025-11-20")
@@ -179,6 +189,15 @@ func thinkingDisplay(body map[string]any) bool {
 func hasRoleSystem(body map[string]any) bool {
 	for _, m := range translate.AsArr(body["messages"]) {
 		if translate.AsStr(translate.AsMap(m)["role"]) == "system" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAdvisorTool(body map[string]any) bool {
+	for _, tool := range translate.AsArr(body["tools"]) {
+		if strings.HasPrefix(strings.ToLower(translate.AsStr(translate.AsMap(tool)["type"])), "advisor_") {
 			return true
 		}
 	}

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/kacperkwapisz/fob/internal/domain"
-	"github.com/kacperkwapisz/fob/internal/httpx"
 	"github.com/kacperkwapisz/fob/internal/provider"
 	"github.com/kacperkwapisz/fob/internal/translate"
 )
@@ -51,8 +50,7 @@ func (e Executor) Refresh(ctx context.Context, credential domain.Credential) (do
 	if err != nil {
 		return credential, err
 	}
-	req.Header.Set("content-type", "application/json")
-	res, err := httpx.Client().Do(req)
+	res, err := provider.ClaudeOAuthDo(req)
 	if err != nil {
 		return credential, err
 	}
