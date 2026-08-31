@@ -142,6 +142,56 @@ func TestClaude429FailoversToCursor(t *testing.T) {
 	}
 }
 
+func TestGrokStreamMetersAPIEquivalentUSD(t *testing.T) {
+	ch := make(chan any, 4)
+	go func() {
+		defer close(ch)
+		ch <- map[string]any{"type": "response.created", "response": map[string]any{"id": "resp_1"}}
+		ch <- map[string]any{"type": "response.output_text.delta", "delta": "hi"}
+		ch <- map[string]any{
+			"type": "response.completed",
+			"response": map[string]any{
+				"id": "resp_1", "output": []any{},
+				"usage": map[string]any{"input_tokens": 1_000_000.0, "output_tokens": 0.0},
+			},
+		}
+	}()
+	fob, d := testFob(t, map[domain.ProviderID]provider.Executor{
+		domain.ProviderGrok: fakeExec{
+			id: domain.ProviderGrok, format: domain.FormatGrok,
+			models: []domain.ModelInfo{{ID: "grok-4.6", Object: "model", OwnedBy: "grok"}},
+			fn: func(domain.Credential) provider.ExecuteResult {
+				return provider.ExecuteResult{OK: true, Status: 200, Stream: ch}
+			},
+		},
+	})
+	defer d.Close()
+	_, _ = fob.Vault.Save(store.SaveCredential{ID: "g1", Provider: domain.ProviderGrok, Label: "Grok", Tokens: domain.CredentialTokens{AccessToken: "t", Extra: map[string]any{}}})
+	created, err := fob.Keys.Create("t", nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _ := fob.Keys.Verify(created.Secret)
+	result, err := Proxy(context.Background(), fob, Request{
+		Inbound: domain.InboundClaudeMessages,
+		Body:    map[string]any{"model": "grok-4.6", "messages": []any{map[string]any{"role": "user", "content": "hi"}}},
+		Key:     *key,
+		Stream:  true,
+	})
+	if err != nil || !result.OK || result.Stream == nil {
+		t.Fatalf("%+v %v", result, err)
+	}
+	for range result.Stream {
+	}
+	today, err := fob.Usage.Since(24 * 60 * 60 * 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if today.Requests != 1 || today.PromptTokens != 1_000_000 || today.USD != 2 {
+		t.Fatalf("meter %+v", today)
+	}
+}
+
 func AsMap(v any) map[string]any {
 	m, _ := v.(map[string]any)
 	if m == nil {

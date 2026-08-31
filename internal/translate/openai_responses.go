@@ -223,9 +223,14 @@ func claudeToResponses(model string, _, upstream any) any {
 	}
 }
 
-func codexStreamToResponses(_ string, _ any, chunk any, _ *StreamState) []string {
+func codexStreamToResponses(_ string, _ any, chunk any, state *StreamState) []string {
 	ev := AsMap(chunk)
-	return []string{"event: " + AsStr(ev["type"], "message") + "\ndata: " + mustJSON(chunk)}
+	typ := AsStr(ev["type"], "message")
+	if typ == "response.completed" || typ == "response.done" {
+		captureResponsesUsage(state, AsMap(ev["response"])["usage"])
+		state.Finished = true
+	}
+	return []string{"event: " + typ + "\ndata: " + mustJSON(chunk)}
 }
 
 func grokStreamToResponses(model string, _ any, chunk any, state *StreamState) []string {

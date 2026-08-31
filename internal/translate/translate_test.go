@@ -132,6 +132,55 @@ func TestGrokStreamToOpenAIChat(t *testing.T) {
 	if !contains(done, "data: [DONE]") {
 		t.Fatalf("%v", done)
 	}
+	if state.PromptTokens != 3 || state.CompletionTokens != 2 {
+		t.Fatalf("usage state %+v", state)
+	}
+}
+
+func TestGrokStreamToClaudeCapturesUsage(t *testing.T) {
+	state := EmptyStreamState()
+	TranslateStream(domain.InboundClaudeMessages, domain.FormatGrok, "grok-4.6", map[string]any{}, map[string]any{
+		"type": "response.created", "response": map[string]any{"id": "resp_1"},
+	}, &state)
+	TranslateStream(domain.InboundClaudeMessages, domain.FormatGrok, "grok-4.6", map[string]any{}, map[string]any{
+		"type": "response.output_text.delta", "delta": "Hey",
+	}, &state)
+	TranslateStream(domain.InboundClaudeMessages, domain.FormatGrok, "grok-4.6", map[string]any{}, map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id": "resp_1", "output": []any{},
+			"usage": map[string]any{"input_tokens": 283.0, "output_tokens": 846.0},
+		},
+	}, &state)
+	if !state.Finished {
+		t.Fatal("expected finished")
+	}
+	if state.PromptTokens != 283 || state.CompletionTokens != 846 {
+		t.Fatalf("usage state prompt=%d completion=%d", state.PromptTokens, state.CompletionTokens)
+	}
+}
+
+func TestGrokStreamToResponsesCapturesUsage(t *testing.T) {
+	state := EmptyStreamState()
+	TranslateStream(domain.InboundOpenAIResponses, domain.FormatGrok, "grok-4.6", map[string]any{}, map[string]any{
+		"type": "response.created", "response": map[string]any{"id": "resp_1"},
+	}, &state)
+	TranslateStream(domain.InboundOpenAIResponses, domain.FormatGrok, "grok-4.6", map[string]any{}, map[string]any{
+		"type": "response.output_text.delta", "delta": "Hey",
+	}, &state)
+	TranslateStream(domain.InboundOpenAIResponses, domain.FormatGrok, "grok-4.6", map[string]any{}, map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id": "resp_1", "output": []any{},
+			"usage": map[string]any{"input_tokens": 283.0, "output_tokens": 846.0},
+		},
+	}, &state)
+	if !state.Finished {
+		t.Fatal("expected finished")
+	}
+	if state.PromptTokens != 283 || state.CompletionTokens != 846 {
+		t.Fatalf("usage state prompt=%d completion=%d", state.PromptTokens, state.CompletionTokens)
+	}
 }
 
 func TestClaudeStreamToOpenAI(t *testing.T) {

@@ -366,9 +366,10 @@ func codexStreamToClaude(model string, _ any, chunk any, state *StreamState) []s
 		lines = append(lines, sse("content_block_start", map[string]any{"type": "content_block_start", "index": 0, "content_block": map[string]any{"type": "text", "text": ""}}))
 	} else if typ == "response.output_text.delta" {
 		lines = append(lines, sse("content_block_delta", map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]any{"type": "text_delta", "text": AsStr(ev["delta"])}}))
-	} else if typ == "response.completed" {
+	} else if typ == "response.completed" || typ == "response.done" {
+		captureResponsesUsage(state, AsMap(ev["response"])["usage"])
 		lines = append(lines, sse("content_block_stop", map[string]any{"type": "content_block_stop", "index": 0}))
-		lines = append(lines, sse("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": "end_turn"}, "usage": map[string]any{"output_tokens": 0}}))
+		lines = append(lines, sse("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": "end_turn"}, "usage": map[string]any{"output_tokens": state.CompletionTokens}}))
 		lines = append(lines, sse("message_stop", map[string]any{"type": "message_stop"}))
 		state.Finished = true
 	}
