@@ -255,8 +255,11 @@ func TestPanelJS(t *testing.T) {
 	defer booted.DB.Close()
 	res := httptest.NewRecorder()
 	booted.Handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/panel.js", nil))
-	if res.Code != 200 || !strings.Contains(res.Body.String(), "/api/panel/keys") || !strings.Contains(res.Body.String(), "/api/panel/sub") {
+	if res.Code != 200 || !strings.Contains(res.Body.String(), "/api/panel/keys") || !strings.Contains(res.Body.String(), "/api/panel/sub") || !strings.Contains(res.Body.String(), "closest(\"#sub-load\")") {
 		t.Fatal(res.Body.String())
+	}
+	if res.Header().Get("cache-control") != "no-store" {
+		t.Fatalf("cache %s", res.Header().Get("cache-control"))
 	}
 }
 
@@ -326,7 +329,7 @@ func TestPanelSubOmitsUnknownProviders(t *testing.T) {
 	req.Header.Set("cookie", session)
 	booted.Handler.ServeHTTP(res, req)
 	html := res.Body.String()
-	if !strings.Contains(html, ">Sub<") || !strings.Contains(html, "id=\"sub-load\"") {
+	if !strings.Contains(html, ">Sub<") || !strings.Contains(html, "id=\"sub-load\"") || !strings.Contains(html, "/panel.js?v=0.6.1") {
 		t.Fatalf("%s", html)
 	}
 }

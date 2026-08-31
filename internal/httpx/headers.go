@@ -47,6 +47,15 @@ func Bytes(w http.ResponseWriter, status int, contentType string, body []byte) {
 	_, _ = w.Write(body)
 }
 
+func Static(w http.ResponseWriter, contentType string, body []byte) {
+	h := w.Header()
+	h.Set("content-type", contentType)
+	h.Set("cache-control", "no-store")
+	ApplySecurityHeaders(h, false)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+}
+
 func SeeOther(w http.ResponseWriter, location, setCookie string) {
 	h := w.Header()
 	h.Set("location", location)

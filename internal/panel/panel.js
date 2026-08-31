@@ -50,8 +50,9 @@ document.addEventListener("click", (e) => {
     location.reload()
     return
   }
-  if (t.id === "sub-load") {
-    loadSub(t)
+  const load = t.closest("#sub-load")
+  if (load instanceof HTMLButtonElement) {
+    loadSub(load)
   }
 })
 

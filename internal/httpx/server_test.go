@@ -42,6 +42,13 @@ func TestGuardRejectsMethodOverride(t *testing.T) {
 	}
 }
 
+func TestGuardSkipsTimeoutOnPanelSub(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/panel/sub", nil)
+	if !noTimeout(req) {
+		t.Fatal("sub should skip the 30s guard")
+	}
+}
+
 func TestGuardHonorsHealth(t *testing.T) {
 	mux := NewMux()
 	mux.Handle(http.MethodGet, "/health", func(w http.ResponseWriter, _ *http.Request) {

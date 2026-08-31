@@ -21,10 +21,10 @@ const dayMS = 24 * 60 * 60 * 1000
 
 func registerPanel(mux *httpx.Mux, fob *proxy.Fob, e *env.Env, panelAuth *store.PanelAuth, settings *store.SettingsStore, logins map[domain.ProviderID]oauth.ProviderLogin) {
 	mux.Handle(http.MethodGet, "/design.css", func(w http.ResponseWriter, _ *http.Request) {
-		httpx.Bytes(w, 200, "text/css; charset=utf-8", panel.DesignCSS)
+		httpx.Static(w, "text/css; charset=utf-8", panel.DesignCSS)
 	})
 	mux.Handle(http.MethodGet, "/panel.js", func(w http.ResponseWriter, _ *http.Request) {
-		httpx.Bytes(w, 200, "text/javascript; charset=utf-8", panel.PanelJS)
+		httpx.Static(w, "text/javascript; charset=utf-8", panel.PanelJS)
 	})
 	mux.Handle(http.MethodGet, "/", func(w http.ResponseWriter, r *http.Request) {
 		if panelAuth.State().MustReset {

@@ -193,7 +193,7 @@ func methodOverrideKey(r *http.Request) string {
 
 func noTimeout(r *http.Request) bool {
 	p, m := r.URL.Path, r.Method
-	if m == http.MethodGet && p == "/v1/models" {
+	if m == http.MethodGet && (p == "/v1/models" || p == "/api/panel/sub") {
 		return true
 	}
 	if m != http.MethodPost {
