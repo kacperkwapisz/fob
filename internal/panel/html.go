@@ -304,7 +304,7 @@ func cursorSettingsCard(settings SettingsProps) string {
 	}
 	return fmt.Sprintf(`<section class="card">
       <h2>Cursor</h2>
-      <p class="lede">Prefix listed Cursor models with <code>cursor/</code>. Grok failover maps <code>grok-4.5</code> onto Cursor Grok when the Grok sub is exhausted.</p>
+      <p class="lede">Prefix listed Cursor models with <code>cursor/</code> (effort/fast variants already collapse). Grok failover maps <code>grok-4.5</code> onto Cursor Grok when the Grok sub is exhausted.</p>
       <form method="post" action="/settings/cursor" class="stack">
         <label class="field" style="flex-direction:row;gap:.6rem;align-items:center">
           <input type="checkbox" name="prefix" value="1" %s />

@@ -42,6 +42,89 @@ func StripPublicPrefix(id string) string {
 	return strings.TrimPrefix(id, "cursor/")
 }
 
+// Longer tokens first so extra-high wins over high.
+var effortSuffixes = []string{"-extra-high", "-xhigh", "-medium", "-minimal", "-high", "-low", "-max", "-none"}
+
+func publicFamilyID(wireID string) string {
+	id := strings.TrimSuffix(wireID, "-fast")
+	thinking := strings.Contains(id, "-thinking")
+	core := strings.ReplaceAll(id, "-thinking", "")
+	for _, s := range effortSuffixes {
+		if strings.HasSuffix(core, s) {
+			core = strings.TrimSuffix(core, s)
+			break
+		}
+	}
+	if thinking {
+		return core + "-thinking"
+	}
+	return core
+}
+
+func CollapseForList(models []Model) []Model {
+	type group struct {
+		rep  Model
+		rank int
+	}
+	groups := map[string]*group{}
+	order := make([]string, 0, len(models))
+	for _, m := range models {
+		key := publicFamilyID(m.ID)
+		if key == "" {
+			continue
+		}
+		rank := variantListRank(m)
+		if g, ok := groups[key]; ok {
+			if rank < g.rank {
+				g.rep = Model{ID: key, Name: m.Name, VariantIDs: m.VariantIDs}
+				g.rank = rank
+			}
+			continue
+		}
+		order = append(order, key)
+		cp := m
+		cp.ID = key
+		groups[key] = &group{rep: cp, rank: rank}
+	}
+	out := make([]Model, 0, len(order))
+	for _, key := range order {
+		out = append(out, groups[key].rep)
+	}
+	return out
+}
+
+func variantListRank(m Model) int {
+	score := 0
+	id := m.ID
+	if strings.HasSuffix(id, "-fast") {
+		score += 1000
+		id = strings.TrimSuffix(id, "-fast")
+	}
+	name := strings.ToLower(m.Name)
+	if containsWord(name, "fast") {
+		score += 1000
+	}
+	if strings.Contains(name, "extra high") || containsWord(name, "minimal") || containsWord(name, "medium") || containsWord(name, "high") || containsWord(name, "low") || containsWord(name, "max") || containsWord(name, "none") {
+		score += 10
+	}
+	core := strings.ReplaceAll(id, "-thinking", "")
+	switch {
+	case strings.HasSuffix(core, "-medium"):
+		score += 1
+	case strings.HasSuffix(core, "-extra-high"), strings.HasSuffix(core, "-xhigh"):
+		score += 3
+	case strings.HasSuffix(core, "-high"):
+		score += 2
+	case strings.HasSuffix(core, "-max"):
+		score += 4
+	case strings.HasSuffix(core, "-low"):
+		score += 5
+	case strings.HasSuffix(core, "-none"), strings.HasSuffix(core, "-minimal"):
+		score += 6
+	}
+	return score
+}
+
 func RestoreWirePrefix(id string, known []string) string {
 	if strings.HasPrefix(id, "cursor-") || strings.HasPrefix(id, "composer-") {
 		return id
@@ -237,7 +320,7 @@ func indexVariants(models []Model) {
 			base = strings.TrimSuffix(base, "-fast")
 		}
 		effort := ""
-		for _, s := range []string{"-high", "-medium", "-low", "-xhigh", "-max", "-none"} {
+		for _, s := range effortSuffixes {
 			if strings.HasSuffix(strings.TrimSuffix(base, "-thinking"), s) || strings.HasSuffix(base, s) {
 				effort = strings.TrimPrefix(s, "-")
 				break
@@ -282,6 +365,7 @@ func RegisterModelVariants(models []Model) {
 func Snapshot() []Model { return snapshot }
 
 func ToModelInfo(models []Model, prefix bool) []domain.ModelInfo {
+	models = CollapseForList(models)
 	out := make([]domain.ModelInfo, len(models))
 	for i, m := range models {
 		id := PublicID(m.ID)
@@ -352,19 +436,55 @@ func MapNativeToWire(id string, known []string) string {
 			}
 		}
 	}
+	thinking := strings.Contains(id, "-thinking")
 	family := stripEffort(id)
-	medium := family + "-medium"
+	if hit := preferredWire(family, thinking, known); hit != "" {
+		return hit
+	}
+	return ""
+}
+
+func preferredWire(family string, thinking bool, known []string) string {
+	set := map[string]bool{}
 	for _, k := range known {
-		if k == medium {
-			return medium
+		set[k] = true
+	}
+	efforts := []string{"medium", "high", "xhigh", "max", "low", "none", "extra-high", "minimal"}
+	var candidates []string
+	if thinking {
+		for _, e := range efforts {
+			candidates = append(candidates, family+"-thinking-"+e, family+"-"+e+"-thinking")
+		}
+		candidates = append(candidates, family+"-thinking")
+	} else if set[family] {
+		return family
+	} else {
+		for _, e := range efforts {
+			candidates = append(candidates, family+"-"+e)
+		}
+	}
+	for _, c := range candidates {
+		if set[c] {
+			return c
 		}
 	}
 	for _, k := range known {
-		if k == family || strings.HasPrefix(k, family+"-") {
+		if !sameFamily(k, family) {
+			continue
+		}
+		hasThinking := strings.Contains(k, "-thinking")
+		if hasThinking == thinking {
 			return k
 		}
 	}
 	return ""
+}
+
+func sameFamily(id, family string) bool {
+	if id == family {
+		return true
+	}
+	return strings.HasPrefix(id, family+"-")
 }
 
 func MapWireToNative(id string) (domain.ProviderID, string, bool) {
@@ -388,7 +508,7 @@ func MapWireToNative(id string) (domain.ProviderID, string, bool) {
 func stripEffort(id string) string {
 	id = strings.ReplaceAll(id, "-thinking", "")
 	id = strings.TrimSuffix(id, "-fast")
-	for _, s := range []string{"-high", "-medium", "-low", "-xhigh", "-max", "-none"} {
+	for _, s := range effortSuffixes {
 		id = strings.TrimSuffix(id, s)
 	}
 	return id
