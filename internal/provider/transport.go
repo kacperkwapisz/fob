@@ -32,7 +32,18 @@ var (
 	oauthSessionCache  = utls.NewLRUClientSessionCache(oauthSessionCacheCapacity)
 )
 
-func PostJSON(ctx context.Context, rawURL string, body any, headers map[string]string) (*http.Response, error) {
+var testJSONClient *http.Client
+
+func SetJSONClientForTests(c *http.Client) func() {
+	old := testJSONClient
+	testJSONClient = c
+	return func() { testJSONClient = old }
+}
+
+func clientForURL(rawURL string) *http.Client {
+	if testJSONClient != nil {
+		return testJSONClient
+	}
 	host := ""
 	if u, err := url.Parse(rawURL); err == nil {
 		host = strings.ToLower(u.Hostname())
@@ -46,7 +57,24 @@ func PostJSON(ctx context.Context, rawURL string, body any, headers map[string]s
 	case "platform.claude.com":
 		client = ClaudeOAuthHTTP()
 	}
-	return postJSONWith(ctx, client, rawURL, body, headers)
+	return client
+}
+
+func PostJSON(ctx context.Context, rawURL string, body any, headers map[string]string) (*http.Response, error) {
+	return postJSONWith(ctx, clientForURL(rawURL), rawURL, body, headers)
+}
+
+func GetJSON(ctx context.Context, rawURL string, headers map[string]string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range headers {
+		if v != "" {
+			req.Header.Set(k, v)
+		}
+	}
+	return clientForURL(rawURL).Do(req)
 }
 
 func ClaudeHTTP() *http.Client {
@@ -333,16 +361,23 @@ func (t *chromeTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
-func claudeCodeRequestHeaderOrder(_, requestTarget string) []string {
+func claudeCodeRequestHeaderOrder(method, requestTarget string) []string {
 	if strings.HasPrefix(requestTarget, "/v1/messages/count_tokens") {
 		return ClaudeCountTokensHeaderOrder
+	}
+	if method == http.MethodGet {
+		for _, target := range []string{"/api/oauth/usage", "/api/oauth/profile"} {
+			if strings.HasPrefix(requestTarget, target) {
+				return ClaudeOAuthInspectHeaderOrder
+			}
+		}
 	}
 	return ClaudeHeaderOrder
 }
 
 func claudeOAuthRequestHeaderOrder(method, requestTarget string) []string {
 	if method == http.MethodGet {
-		for _, target := range []string{"/api/oauth/profile", "/api/oauth/claude_cli/roles"} {
+		for _, target := range []string{"/api/oauth/profile", "/api/oauth/usage", "/api/oauth/claude_cli/roles"} {
 			if strings.HasPrefix(requestTarget, target) {
 				return ClaudeOAuthInspectHeaderOrder
 			}

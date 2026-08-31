@@ -10,6 +10,19 @@ import (
 	"strings"
 )
 
+func ReadJSON(res *http.Response) (any, []byte, error) {
+	defer res.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(res.Body, 4<<20))
+	if err != nil {
+		return nil, nil, err
+	}
+	var v any
+	if len(raw) > 0 && json.Unmarshal(raw, &v) != nil {
+		return nil, raw, nil
+	}
+	return v, raw, nil
+}
+
 func postJSONWith(ctx context.Context, client *http.Client, rawURL string, body any, headers map[string]string) (*http.Response, error) {
 	raw, err := json.Marshal(body)
 	if err != nil {

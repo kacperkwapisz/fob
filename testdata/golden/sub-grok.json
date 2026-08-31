@@ -1,0 +1,16 @@
+{
+  "weekly": {
+    "config": {
+      "creditUsagePercent": 44,
+      "currentPeriod": { "type": "weekly", "end": "2026-09-07T00:00:00Z" },
+      "productUsage": [{ "product": "grok-4.5", "usagePercent": 70 }]
+    }
+  },
+  "monthly": {
+    "config": {
+      "monthlyLimit": { "val": 15000 },
+      "used": { "val": 4500 },
+      "billingPeriodEnd": "2026-09-16T00:00:00Z"
+    }
+  }
+}

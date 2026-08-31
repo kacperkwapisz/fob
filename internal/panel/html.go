@@ -15,6 +15,7 @@ type DashboardProps struct {
 	Credentials []domain.Credential
 	Keys        []domain.LocalKey
 	Usage       UsageProps
+	SubCount    int
 	Settings    SettingsProps
 }
 
@@ -171,7 +172,10 @@ func Dashboard(props DashboardProps) string {
     <div class="deck">`)
 	b.WriteString(loginsCard(props))
 	b.WriteString(keysCard(props.Keys))
+	b.WriteString(`<div class="stack">`)
 	b.WriteString(meterCard(props.Usage))
+	b.WriteString(subCard(props.SubCount))
+	b.WriteString(`</div>`)
 	b.WriteString(cursorSettingsCard(props.Settings))
 	b.WriteString(`</div>
     <form method="post" action="/logout" style="margin-top:2rem">
@@ -290,6 +294,20 @@ func meterCard(usage UsageProps) string {
 		b.WriteString(`</tbody></table>`)
 	}
 	b.WriteString(`</section>`)
+	return b.String()
+}
+
+func subCard(n int) string {
+	var b strings.Builder
+	b.WriteString(`<section class="card" id="sub"><h2>Sub</h2><p class="lede">Remaining on the subscription. Not the meter.</p>`)
+	if n == 0 {
+		b.WriteString(`<p class="empty">Connect a login, then load.</p></section>`)
+		return b.String()
+	}
+	b.WriteString(`<div id="sub-body"><p class="empty">Idle until you load.</p></div>
+      <div class="actions" style="margin-top:1rem">
+        <button class="btn btn-primary" type="button" id="sub-load">Load</button>
+      </div></section>`)
 	return b.String()
 }
 

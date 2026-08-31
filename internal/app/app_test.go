@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/kacperkwapisz/fob/internal/domain"
+	"github.com/kacperkwapisz/fob/internal/provider"
 	"github.com/kacperkwapisz/fob/internal/store"
 )
 
@@ -253,8 +255,79 @@ func TestPanelJS(t *testing.T) {
 	defer booted.DB.Close()
 	res := httptest.NewRecorder()
 	booted.Handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/panel.js", nil))
-	if res.Code != 200 || !strings.Contains(res.Body.String(), "/api/panel/keys") {
+	if res.Code != 200 || !strings.Contains(res.Body.String(), "/api/panel/keys") || !strings.Contains(res.Body.String(), "/api/panel/sub") {
 		t.Fatal(res.Body.String())
+	}
+}
+
+func TestPanelSubUnauthorized(t *testing.T) {
+	booted, err := Create(map[string]string{"JWT_SECRET": secret, "DATABASE_PATH": ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer booted.DB.Close()
+	res := httptest.NewRecorder()
+	booted.Handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/api/panel/sub", nil))
+	if res.Code != 401 {
+		t.Fatalf("status %d", res.Code)
+	}
+}
+
+func TestPanelSubJSON(t *testing.T) {
+	restore := provider.SetJSONClientForTests(&http.Client{Transport: roundTrip(func(r *http.Request) *http.Response {
+		if strings.Contains(r.URL.Path, "/api/oauth/usage") {
+			return jsonResp(200, map[string]any{
+				"five_hour": map[string]any{"utilization": 10.0, "resets_at": "2026-09-01T00:00:00Z"},
+			})
+		}
+		if strings.Contains(r.URL.Path, "/api/oauth/profile") {
+			return jsonResp(200, map[string]any{"account": map[string]any{"has_claude_pro": true}})
+		}
+		return jsonResp(404, map[string]any{})
+	})})
+	defer restore()
+	booted, session := unlocked(t)
+	defer booted.DB.Close()
+	if _, err := booted.Fob.Vault.Save(store.SaveCredential{
+		Provider: domain.ProviderClaude, Label: "work claude",
+		Tokens: domain.CredentialTokens{AccessToken: "at", Extra: map[string]any{}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/panel/sub", nil)
+	req.Header.Set("cookie", session)
+	booted.Handler.ServeHTTP(res, req)
+	if res.Code != 200 {
+		t.Fatalf("status %d %s", res.Code, res.Body.String())
+	}
+	var body struct {
+		Credentials []map[string]any `json:"credentials"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Credentials) != 1 || body.Credentials[0]["ok"] != true || body.Credentials[0]["plan"] != "Pro" {
+		t.Fatalf("%s", res.Body.String())
+	}
+}
+
+func TestPanelSubOmitsUnknownProviders(t *testing.T) {
+	booted, session := unlocked(t)
+	defer booted.DB.Close()
+	if _, err := booted.Fob.Vault.Save(store.SaveCredential{
+		Provider: domain.ProviderClaude, Label: "work claude",
+		Tokens: domain.CredentialTokens{AccessToken: "at", Extra: map[string]any{}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("cookie", session)
+	booted.Handler.ServeHTTP(res, req)
+	html := res.Body.String()
+	if !strings.Contains(html, ">Sub<") || !strings.Contains(html, "id=\"sub-load\"") {
+		t.Fatalf("%s", html)
 	}
 }
 
@@ -281,4 +354,19 @@ func unlocked(t *testing.T) (*Booted, string) {
 		t.Fatalf("cookie %s", cookie)
 	}
 	return booted, cookie
+}
+
+type roundTrip func(*http.Request) *http.Response
+
+func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r), nil }
+
+func jsonResp(status int, body any) *http.Response {
+	raw, _ := json.Marshal(body)
+	rec := httptest.NewRecorder()
+	rec.Header().Set("content-type", "application/json")
+	rec.WriteHeader(status)
+	_, _ = rec.Write(raw)
+	res := rec.Result()
+	res.Body = io.NopCloser(strings.NewReader(string(raw)))
+	return res
 }

@@ -332,3 +332,56 @@ input:focus {
   gap: var(--space-2);
   flex-wrap: wrap;
 }
+
+.sub-cred {
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--line);
+}
+
+.sub-cred:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.sub-head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  align-items: baseline;
+  margin-bottom: var(--space-2);
+}
+
+.sub-head strong {
+  font-family: var(--font-display);
+  font-weight: 500;
+}
+
+.sub-row {
+  margin-top: var(--space-2);
+}
+
+.sub-row-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: 0.75rem;
+  color: var(--ink-mute);
+  margin-bottom: 0.2rem;
+}
+
+.sub-row-meta b {
+  color: var(--ink);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.sub-bar {
+  height: 2px;
+  background: var(--line);
+}
+
+.sub-bar > span {
+  display: block;
+  height: 2px;
+  background: var(--accent);
+}

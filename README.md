@@ -51,7 +51,7 @@ Cursor effort and fast variants (`-high`, `-medium`, `-fast`, …) collapse to o
 - `POST /v1/messages/count_tokens`
 - `POST /v1/responses`
 
-Bearer: a LocalKey (`sk-fob-…`). Meter dollars are **API-equivalent $** from [models.dev](https://models.dev) list prices, not your subscription bill.
+Bearer: a LocalKey (`sk-fob-…`). Meter dollars are **API-equivalent $** from [models.dev](https://models.dev) list prices, not your subscription bill. The panel Sub card is remaining on the subscription (click to load).
 
 ## Dev
 
