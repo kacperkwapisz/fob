@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/kacperkwapisz/fob/internal/sub"
 )
 
 func TestParseCursorSub(t *testing.T) {
@@ -14,16 +16,26 @@ func TestParseCursorSub(t *testing.T) {
 	if snap.Plan != "Ultra · $200/mo" {
 		t.Fatalf("plan %s", snap.Plan)
 	}
-	if snap.Note != "You've hit your usage limit" {
+	if snap.Note != "" {
 		t.Fatalf("note %s", snap.Note)
 	}
-	ids := map[string]float64{}
+	got := map[string]sub.Window{}
 	for _, w := range snap.Windows {
-		if w.UsedPercent != nil {
-			ids[w.ID] = *w.UsedPercent
-		}
+		got[w.ID] = w
 	}
-	if ids["auto"] != 20.458 || ids["api"] != 62.94 || ids["included"] != 100 {
+	if got["auto"].Label != "Cursor Models" || got["auto"].UsedPercent == nil || *got["auto"].UsedPercent != 20.458 {
+		t.Fatalf("auto %+v", got["auto"])
+	}
+	if got["api"].Label != "Other Models" || got["api"].UsedPercent == nil || *got["api"].UsedPercent != 62.94 {
+		t.Fatalf("api %+v", got["api"])
+	}
+	if _, ok := got["included"]; ok {
+		t.Fatalf("included %+v", snap.Windows)
+	}
+	if _, ok := got["extra"]; ok {
+		t.Fatalf("extra %+v", snap.Windows)
+	}
+	if len(got) != 2 {
 		t.Fatalf("%+v", snap.Windows)
 	}
 	if snap.Windows[0].ResetsAt == nil || *snap.Windows[0].ResetsAt != 1789582434000 {

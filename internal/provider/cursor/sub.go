@@ -78,9 +78,6 @@ func ParseSub(usage, plan any) sub.Snapshot {
 		snap.Note = sub.AsStr(u["displayMessage"], "not shown")
 		return snap
 	}
-	if msg := sub.AsStr(u["displayMessage"], sub.AsStr(u["display_message"])); msg != "" {
-		snap.Note = msg
-	}
 	cycleEnd := sub.UnixMaybe(sub.FirstMap(u, "billingCycleEnd", "billing_cycle_end"))
 	if cycleEnd == nil {
 		cycleEnd = sub.UnixMaybe(sub.FirstMap(p, "billingCycleEnd", "billing_cycle_end"))
@@ -88,23 +85,12 @@ func ParseSub(usage, plan any) sub.Snapshot {
 	planUsage := sub.AsMap(sub.FirstMap(u, "planUsage", "plan_usage"))
 	if auto, ok := sub.Num(sub.FirstMap(planUsage, "autoPercentUsed", "auto_percent_used")); ok {
 		snap.Windows = append(snap.Windows, sub.Window{
-			ID: "auto", Label: "Auto", UsedPercent: sub.Ptr(sub.ClampPercent(auto)), ResetsAt: cycleEnd,
-			Detail: sub.AsStr(u["autoModelSelectedDisplayMessage"], sub.AsStr(u["auto_model_selected_display_message"])),
+			ID: "auto", Label: "Cursor Models", UsedPercent: sub.Ptr(sub.ClampPercent(auto)), ResetsAt: cycleEnd,
 		})
 	}
 	if api, ok := sub.Num(sub.FirstMap(planUsage, "apiPercentUsed", "api_percent_used")); ok {
 		snap.Windows = append(snap.Windows, sub.Window{
-			ID: "api", Label: "API", UsedPercent: sub.Ptr(sub.ClampPercent(api)), ResetsAt: cycleEnd,
-			Detail: sub.AsStr(u["namedModelSelectedDisplayMessage"], sub.AsStr(u["named_model_selected_display_message"])),
-		})
-	}
-	included, hasIncluded := sub.Num(sub.FirstMap(planUsage, "includedSpend", "included_spend"))
-	limit, hasLimit := sub.Num(sub.FirstMap(planUsage, "limit"))
-	if hasIncluded && hasLimit && limit > 0 {
-		pct := sub.ClampPercent(included / limit * 100)
-		snap.Windows = append(snap.Windows, sub.Window{
-			ID: "included", Label: "Included", UsedPercent: sub.Ptr(pct), ResetsAt: cycleEnd,
-			Detail: fmt.Sprintf("$%.0f / $%.0f", included/100, limit/100),
+			ID: "api", Label: "Other Models", UsedPercent: sub.Ptr(sub.ClampPercent(api)), ResetsAt: cycleEnd,
 		})
 	}
 	if len(snap.Windows) == 0 {

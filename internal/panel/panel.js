@@ -98,11 +98,12 @@ function renderSubCred(c) {
 function renderSubWindow(w) {
   const used = typeof w.used_percent === "number" ? Math.max(0, Math.min(100, w.used_percent)) : null
   const remain = used === null ? null : Math.max(0, 100 - used)
-  const pct = remain === null ? "—" : `${Math.round(remain)}%`
-  const reset = w.resets_at ? relativeReset(w.resets_at) : ""
-  const detail = w.detail ? ` · ${escapeHTML(w.detail)}` : ""
-  const width = remain === null ? 0 : remain
-  return `<div class="sub-row"><div class="sub-row-meta"><span>${escapeHTML(w.label || w.id)}</span><span><b>${pct}</b>${reset}${detail}</span></div><div class="sub-bar"><span style="width:${width}%"></span></div></div>`
+  const bits = []
+  if (remain !== null) bits.push(`<b>${Math.round(remain)}%</b>`)
+  if (w.resets_at) bits.push(relativeReset(w.resets_at).replace(/^ · /, ""))
+  if (w.detail) bits.push(escapeHTML(w.detail))
+  const bar = remain === null ? "" : `<div class="sub-bar"><span style="width:${remain}%"></span></div>`
+  return `<div class="sub-row"><div class="sub-row-meta"><span>${escapeHTML(w.label || w.id)}</span><span>${bits.join(" · ")}</span></div>${bar}</div>`
 }
 
 function relativeReset(ms) {

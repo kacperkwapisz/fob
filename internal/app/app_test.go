@@ -329,7 +329,7 @@ func TestPanelSubOmitsUnknownProviders(t *testing.T) {
 	req.Header.Set("cookie", session)
 	booted.Handler.ServeHTTP(res, req)
 	html := res.Body.String()
-	if !strings.Contains(html, ">Sub<") || !strings.Contains(html, "id=\"sub-load\"") || !strings.Contains(html, "/panel.js?v=0.6.1") {
+	if !strings.Contains(html, ">Sub<") || !strings.Contains(html, "id=\"sub-load\"") || !strings.Contains(html, "/panel.js?v=0.6.2") {
 		t.Fatalf("%s", html)
 	}
 }
