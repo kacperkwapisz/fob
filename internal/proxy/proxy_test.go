@@ -8,6 +8,7 @@ import (
 	"github.com/kacperkwapisz/fob/internal/domain"
 	"github.com/kacperkwapisz/fob/internal/env"
 	"github.com/kacperkwapisz/fob/internal/provider"
+	"github.com/kacperkwapisz/fob/internal/provider/cursor"
 	"github.com/kacperkwapisz/fob/internal/store"
 )
 
@@ -189,6 +190,65 @@ func TestGrokStreamMetersAPIEquivalentUSD(t *testing.T) {
 	}
 	if today.Requests != 1 || today.PromptTokens != 1_000_000 || today.USD != 2 {
 		t.Fatalf("meter %+v", today)
+	}
+}
+
+func TestListModelsCollapsesCursorVariants(t *testing.T) {
+	fob, d := testFob(t, map[domain.ProviderID]provider.Executor{
+		domain.ProviderGrok: fakeExec{
+			id: domain.ProviderGrok, format: domain.FormatGrok,
+			models: []domain.ModelInfo{{ID: "grok-4.5", Object: "model", OwnedBy: "grok", DisplayName: "Grok 4.5"}},
+		},
+		domain.ProviderCursor: &cursor.Executor{},
+		domain.ProviderClaude: fakeExec{id: domain.ProviderClaude, format: domain.FormatClaude},
+		domain.ProviderCodex:  fakeExec{id: domain.ProviderCodex, format: domain.FormatCodex},
+	})
+	defer d.Close()
+	_, _ = fob.Vault.Save(store.SaveCredential{ID: "g", Provider: domain.ProviderGrok, Label: "Grok", Tokens: domain.CredentialTokens{AccessToken: "g", Extra: map[string]any{}}})
+	_, _ = fob.Vault.Save(store.SaveCredential{ID: "c", Provider: domain.ProviderCursor, Label: "Cursor", Tokens: domain.CredentialTokens{AccessToken: "c", Extra: map[string]any{"kind": "oauth"}}})
+	models := ListModels(fob)
+	ids := map[string]int{}
+	for _, m := range models {
+		ids[m.ID]++
+		if ids[m.ID] > 1 {
+			t.Fatalf("duplicate id %s", m.ID)
+		}
+	}
+	for _, id := range []string{"grok-4.5", "claude-opus-5", "claude-opus-5-thinking", "composer-2.5", "cursor-grok-4.5"} {
+		if ids[id] != 1 {
+			t.Fatalf("missing %s", id)
+		}
+	}
+	for _, id := range []string{"claude-opus-5-medium", "claude-opus-5-high-fast", "composer-2.5-fast", "cursor-grok-4.5-medium"} {
+		if ids[id] != 0 {
+			t.Fatalf("variant listed %s", id)
+		}
+	}
+}
+
+func TestListModelsSkipsCursorWhenNativeOwnsID(t *testing.T) {
+	fob, d := testFob(t, map[domain.ProviderID]provider.Executor{
+		domain.ProviderClaude: fakeExec{
+			id: domain.ProviderClaude, format: domain.FormatClaude,
+			models: []domain.ModelInfo{{ID: "claude-opus-5", Object: "model", OwnedBy: "claude", DisplayName: "Claude Opus 5"}},
+		},
+		domain.ProviderCursor: &cursor.Executor{},
+		domain.ProviderCodex:  fakeExec{id: domain.ProviderCodex, format: domain.FormatCodex},
+		domain.ProviderGrok:   fakeExec{id: domain.ProviderGrok, format: domain.FormatGrok},
+	})
+	defer d.Close()
+	_, _ = fob.Vault.Save(store.SaveCredential{ID: "claude", Provider: domain.ProviderClaude, Label: "Claude", Tokens: domain.CredentialTokens{AccessToken: "c", Extra: map[string]any{}}})
+	_, _ = fob.Vault.Save(store.SaveCredential{ID: "cursor", Provider: domain.ProviderCursor, Label: "Cursor", Tokens: domain.CredentialTokens{AccessToken: "k", Extra: map[string]any{"kind": "oauth"}}})
+	var owner string
+	count := 0
+	for _, m := range ListModels(fob) {
+		if m.ID == "claude-opus-5" {
+			count++
+			owner = m.OwnedBy
+		}
+	}
+	if count != 1 || owner != "claude" {
+		t.Fatalf("count %d owner %s", count, owner)
 	}
 }
 

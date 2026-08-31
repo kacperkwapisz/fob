@@ -40,7 +40,7 @@ Claude and Codex OAuth apps only allow their CLI callbacks (`http://localhost:54
 | `LOG_LEVEL` | `info` | |
 | `CLAUDE_CLIENT_ID` / `CODEX_CLIENT_ID` / `GROK_CLIENT_ID` | embedded CLI clients | Override |
 
-Cursor models that collide with Claude/Codex (`claude-*`, `gpt-*`) are listed under those Cursor wire ids (`claude-opus-5-medium`, …). Force Cursor with a `cursor/` prefix (`cursor/claude-opus-5-medium`). Unprefixed `claude-opus-5` still hits Anthropic first and failovers to Cursor on retryable errors. Optional panel toggle maps Grok ↔ Cursor Grok.
+Cursor effort and fast variants (`-high`, `-medium`, `-fast`, …) collapse to one listed id (`claude-opus-5`, `composer-2.5`). Thinking stays a sibling (`claude-opus-5-thinking`). Pick effort with `reasoning_effort` and fast with `fast: true` or a `-fast` suffix. Ids that already appear on a connected Claude/Codex/Grok catalog are omitted; force Cursor with a `cursor/` prefix (`cursor/claude-opus-5`). Unprefixed `claude-opus-5` still hits Anthropic first and failovers to Cursor on retryable errors. Optional panel toggle maps Grok ↔ Cursor Grok.
 
 ## API
 

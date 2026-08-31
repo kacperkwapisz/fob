@@ -95,3 +95,88 @@ func TestExpandVariants(t *testing.T) {
 		t.Fatalf("%+v", models)
 	}
 }
+
+func TestPublicFamilyID(t *testing.T) {
+	cases := map[string]string{
+		"claude-opus-4-7-high-fast":           "claude-opus-4-7",
+		"claude-opus-4-7-thinking-xhigh-fast": "claude-opus-4-7-thinking",
+		"claude-fable-5-thinking-high":        "claude-fable-5-thinking",
+		"claude-4.6-opus-high-thinking":       "claude-4.6-opus-thinking",
+		"gpt-5.5-extra-high-fast":             "gpt-5.5",
+		"gpt-5.4-mini-high":                   "gpt-5.4-mini",
+		"gemini-3.6-flash-minimal":            "gemini-3.6-flash",
+		"composer-2.5-fast":                   "composer-2.5",
+		"cursor-grok-4.5-medium-fast":         "cursor-grok-4.5",
+		"gpt-5.2":                             "gpt-5.2",
+		"auto":                                "auto",
+	}
+	for in, want := range cases {
+		if got := publicFamilyID(in); got != want {
+			t.Fatalf("%s: got %s want %s", in, got, want)
+		}
+	}
+}
+
+func TestCollapseForListDropsEffortAndFast(t *testing.T) {
+	collapsed := CollapseForList(Snapshot())
+	ids := map[string]string{}
+	for _, m := range collapsed {
+		ids[m.ID] = m.Name
+	}
+	for _, id := range []string{
+		"claude-opus-4-7-high", "claude-opus-4-7-high-fast", "claude-opus-5-medium",
+		"composer-2.5-fast", "gpt-5.2-high", "cursor-grok-4.5-medium",
+	} {
+		if _, ok := ids[id]; ok {
+			t.Fatalf("variant still listed %s", id)
+		}
+	}
+	for _, id := range []string{
+		"claude-opus-4-7", "claude-opus-4-7-thinking", "claude-opus-5", "claude-opus-5-thinking",
+		"composer-2.5", "gpt-5.2", "gpt-5.4", "gpt-5.4-mini", "cursor-grok-4.5", "auto",
+	} {
+		if _, ok := ids[id]; !ok {
+			t.Fatalf("missing family %s", id)
+		}
+	}
+	listed := ToModelInfo(Snapshot(), false)
+	listedIDs := map[string]bool{}
+	for _, m := range listed {
+		listedIDs[m.ID] = true
+	}
+	if !listedIDs["cursor-auto"] {
+		t.Fatal("cursor-auto")
+	}
+	if ids["claude-opus-4-7"] != "Opus 4.7 1M" {
+		t.Fatalf("opus 4.7 name %q", ids["claude-opus-4-7"])
+	}
+	if ids["claude-opus-5"] != "Opus 5 1M" {
+		t.Fatalf("opus 5 name %q", ids["claude-opus-5"])
+	}
+	if ids["composer-2.5"] != "Composer 2.5" {
+		t.Fatalf("composer name %q", ids["composer-2.5"])
+	}
+	if n := len(collapsed); n > 50 || n < 20 {
+		t.Fatalf("collapsed len %d", n)
+	}
+}
+
+func TestMapNativeToWireThinking(t *testing.T) {
+	got := MapNativeToWire("claude-opus-4-7-thinking", KnownIDs())
+	if !stringsContains(got, "thinking") || publicFamilyID(got) != "claude-opus-4-7-thinking" {
+		t.Fatalf("thinking mapped to %s", got)
+	}
+	if MapNativeToWire("claude-opus-5", KnownIDs()) != "claude-opus-5-medium" {
+		t.Fatal(MapNativeToWire("claude-opus-5", KnownIDs()))
+	}
+	if MapNativeToWire("gpt-5.4", KnownIDs()) != "gpt-5.4-medium" {
+		t.Fatal(MapNativeToWire("gpt-5.4", KnownIDs()))
+	}
+	if stripEffort("gpt-5.5-extra-high") != "gpt-5.5" {
+		t.Fatal(stripEffort("gpt-5.5-extra-high"))
+	}
+}
+
+func stringsContains(s, sub string) bool {
+	return len(s) >= len(sub) && (s == sub || indexOf(s, sub) >= 0)
+}
