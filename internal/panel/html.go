@@ -301,7 +301,7 @@ func meterCard(usage UsageProps) string {
 	raw, _ := json.Marshal(usage)
 	var b strings.Builder
 	b.WriteString(`<section class="card card-meter"><div class="card-head"><h2>Meter</h2><p class="lede">API-equivalent $. Not your subscription bill.</p></div><div class="kpis">`)
-	fmt.Fprintf(&b, `<div class="kpi"><div class="kpi-value">%s</div><div class="kpi-label">today</div></div>`, fmtUSD(usage.Today.USD))
+	fmt.Fprintf(&b, `<div class="kpi kpi-signal"><div class="kpi-value">%s</div><div class="kpi-label">today</div></div>`, fmtUSD(usage.Today.USD))
 	fmt.Fprintf(&b, `<div class="kpi"><div class="kpi-value">%s</div><div class="kpi-label">7 days</div></div>`, fmtUSD(usage.D7.USD))
 	fmt.Fprintf(&b, `<div class="kpi"><div class="kpi-value">%s</div><div class="kpi-label">tokens today</div></div>`, fmtInt(usage.Today.PromptTokens+usage.Today.CompletionTokens))
 	fmt.Fprintf(&b, `<div class="kpi"><div class="kpi-value">%s</div><div class="kpi-label">requests today</div></div>`, fmtInt(usage.Today.Requests))

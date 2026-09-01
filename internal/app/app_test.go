@@ -247,7 +247,7 @@ func TestDesignCSS(t *testing.T) {
 		t.Fatal(res.Code)
 	}
 	css := res.Body.String()
-	if !strings.Contains(css, "--accent:") || !strings.Contains(css, "--font-display:") {
+	if !strings.Contains(css, "--accent:") || !strings.Contains(css, "--font-display:") || !strings.Contains(css, "--dither-bayer:") {
 		t.Fatal(css[:200])
 	}
 }

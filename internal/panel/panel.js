@@ -1,5 +1,7 @@
 document.documentElement.classList.add("js")
 
+// 8×8 Bayer. Canvas fills use density 0.5 (series) and 0.55 (bars).
+// CSS wells mask the same matrix at threshold 20/64 via --dither-bayer.
 const BAYER = [
   [0, 32, 8, 40, 2, 34, 10, 42],
   [48, 16, 56, 24, 50, 18, 58, 26],
@@ -202,7 +204,7 @@ function cssColor(name) {
 
 function parseHex(color) {
   const hex = color.replace("#", "").trim()
-  if (hex.length !== 6) return [232, 238, 244]
+  if (hex.length !== 6) return [230, 237, 242]
   return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)]
 }
 
@@ -271,10 +273,10 @@ function drawSeries(canvas, daily) {
   const innerW = w - pad.l - pad.r
   const innerH = h - pad.t - pad.b
   const accent = parseHex(cssColor("--accent") || "#5eead4")
-  const mute = cssColor("--ink-faint") || "#5d6772"
+  const mute = cssColor("--ink-mute") || "#8e99a6"
+  const grid = cssColor("--line") || "#2a343e"
 
-  ctx.strokeStyle = mute
-  ctx.globalAlpha = 0.45
+  ctx.strokeStyle = grid
   ctx.lineWidth = dpr
   for (let i = 0; i < 3; i++) {
     const y = pad.t + (innerH * i) / 2
@@ -283,7 +285,6 @@ function drawSeries(canvas, daily) {
     ctx.lineTo(w - pad.r, y)
     ctx.stroke()
   }
-  ctx.globalAlpha = 1
 
   const xy = points.map((p, i) => {
     const x = pad.l + (points.length === 1 ? innerW / 2 : (innerW * i) / (points.length - 1))
@@ -302,7 +303,7 @@ function drawSeries(canvas, daily) {
 
   ctx.save()
   ctx.clip(path)
-  ctx.drawImage(makeDither(w, h, accent, "bayer", 0.42), 0, 0)
+  ctx.drawImage(makeDither(w, h, accent, "bayer", 0.5), 0, 0)
   ctx.restore()
 
   ctx.beginPath()
@@ -337,7 +338,7 @@ function drawProviders(canvas, rows) {
   const { ctx, w, h, dpr } = sizeCanvas(canvas)
   ctx.clearRect(0, 0, w, h)
   const data = Array.isArray(rows) ? rows.filter((r) => r && r.key) : []
-  const mute = cssColor("--ink-mute") || "#8b96a3"
+  const mute = cssColor("--ink-mute") || "#8e99a6"
   if (!data.length) {
     ctx.fillStyle = mute
     ctx.font = `${12 * dpr}px "IBM Plex Sans", sans-serif`
