@@ -83,7 +83,7 @@ func TestPanelUnlockHTML(t *testing.T) {
 		t.Fatalf("status %d", res.Code)
 	}
 	html := res.Body.String()
-	for _, want := range []string{"Fraunces", "/design.css", "Set a password"} {
+	for _, want := range []string{"IBM+Plex+Sans", "/design.css", "Set a password"} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("missing %q in %s", want, html[:min(len(html), 400)])
 		}
@@ -226,6 +226,11 @@ func TestConnectedLoginsRenderFromVault(t *testing.T) {
 	if !strings.Contains(html, "work claude") || strings.Contains(html, "?ok=") {
 		t.Fatalf("%s", html)
 	}
+	for _, want := range []string{"/alpine.min.js", "chart-series", "meter-data"} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("missing %q", want)
+		}
+	}
 }
 
 func TestDesignCSS(t *testing.T) {
@@ -255,6 +260,19 @@ func TestPanelJS(t *testing.T) {
 	booted.Handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/panel.js", nil))
 	if res.Code != 200 || !strings.Contains(res.Body.String(), "/api/panel/keys") {
 		t.Fatal(res.Body.String())
+	}
+}
+
+func TestAlpineJS(t *testing.T) {
+	booted, err := Create(map[string]string{"JWT_SECRET": secret, "DATABASE_PATH": ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer booted.DB.Close()
+	res := httptest.NewRecorder()
+	booted.Handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/alpine.min.js", nil))
+	if res.Code != 200 || !strings.Contains(res.Body.String(), "Alpine") {
+		t.Fatal(res.Code)
 	}
 }
 

@@ -25,6 +25,9 @@ func registerPanel(mux *httpx.Mux, fob *proxy.Fob, e *env.Env, panelAuth *store.
 	mux.Handle(http.MethodGet, "/panel.js", func(w http.ResponseWriter, _ *http.Request) {
 		httpx.Bytes(w, 200, "text/javascript; charset=utf-8", panel.PanelJS)
 	})
+	mux.Handle(http.MethodGet, "/alpine.min.js", func(w http.ResponseWriter, _ *http.Request) {
+		httpx.Bytes(w, 200, "text/javascript; charset=utf-8", panel.AlpineJS)
+	})
 	mux.Handle(http.MethodGet, "/", func(w http.ResponseWriter, r *http.Request) {
 		if panelAuth.State().MustReset {
 			page(w, panel.ResetView(""), "Fob — set password", "")
@@ -280,13 +283,14 @@ func dashboard(fob *proxy.Fob, settings *store.SettingsStore) string {
 	d7, _ := fob.Usage.Since(7 * dayMS)
 	byProvider, _ := fob.Usage.GroupBy(7*dayMS, "provider")
 	byModel, _ := fob.Usage.GroupBy(7*dayMS, "model")
+	daily, _ := fob.Usage.Daily(7)
 	prefix, _ := settings.Get(proxy.SettingCursorPrefix)
 	grok, _ := settings.Get(proxy.SettingCursorGrokFailover)
 	return panel.Dashboard(panel.DashboardProps{
 		Credentials: creds,
 		Keys:        keys,
 		Usage: panel.UsageProps{
-			Today: today, D7: d7, ByProvider: byProvider, ByModel: byModel,
+			Today: today, D7: d7, ByProvider: byProvider, ByModel: byModel, Daily: daily,
 		},
 		Settings: panel.SettingsProps{CursorPrefix: prefix == "1", GrokFailover: grok == "1"},
 	})
