@@ -174,7 +174,8 @@ document.querySelectorAll("form[data-autosave]").forEach((form) => {
   form.addEventListener("change", () => {
     fetch(form.action, {
       method: "POST",
-      body: new FormData(form),
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(new FormData(form)).toString(),
       credentials: "same-origin",
       redirect: "manual",
     })
@@ -188,6 +189,7 @@ function askConfirm(message) {
     return Promise.resolve(window.confirm(message))
   }
   body.textContent = message
+  dlg.returnValue = ""
   dlg.showModal()
   return new Promise((resolve) => {
     const onClose = () => {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/kacperkwapisz/fob/internal/domain"
 	"github.com/kacperkwapisz/fob/internal/provider"
+	"github.com/kacperkwapisz/fob/internal/proxy"
 	"github.com/kacperkwapisz/fob/internal/store"
 )
 
@@ -260,11 +261,56 @@ func TestPanelJS(t *testing.T) {
 	defer booted.DB.Close()
 	res := httptest.NewRecorder()
 	booted.Handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/panel.js", nil))
-	if res.Code != 200 || !strings.Contains(res.Body.String(), "/api/panel/keys") || !strings.Contains(res.Body.String(), "/api/panel/sub") || !strings.Contains(res.Body.String(), "closest(\"#sub-load\")") {
-		t.Fatal(res.Body.String())
+	js := res.Body.String()
+	if res.Code != 200 || !strings.Contains(js, "/api/panel/keys") || !strings.Contains(js, "/api/panel/sub") || !strings.Contains(js, "closest(\"#sub-load\")") {
+		t.Fatal(js)
+	}
+	if !strings.Contains(js, `dlg.returnValue = ""`) {
+		t.Fatal("confirm dialog must clear returnValue before showModal")
+	}
+	if !strings.Contains(js, "application/x-www-form-urlencoded") || !strings.Contains(js, "URLSearchParams") {
+		t.Fatal("autosave must post urlencoded, not multipart")
 	}
 	if res.Header().Get("cache-control") != "no-store" {
 		t.Fatalf("cache %s", res.Header().Get("cache-control"))
+	}
+}
+
+func TestCursorSettingsURLEncoded(t *testing.T) {
+	booted, session := unlocked(t)
+	defer booted.DB.Close()
+	post := func(body url.Values) {
+		t.Helper()
+		res := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/settings/cursor", strings.NewReader(body.Encode()))
+		req.Header.Set("content-type", "application/x-www-form-urlencoded")
+		req.Header.Set("cookie", session)
+		booted.Handler.ServeHTTP(res, req)
+		if res.Code != 303 {
+			t.Fatalf("status %d", res.Code)
+		}
+	}
+	post(url.Values{"prefix": {"1"}, "grok_failover": {"1"}})
+	if v, _ := booted.Fob.Settings.Get(proxy.SettingCursorPrefix); v != "1" {
+		t.Fatalf("prefix %q", v)
+	}
+	if v, _ := booted.Fob.Settings.Get(proxy.SettingCursorGrokFailover); v != "1" {
+		t.Fatalf("grok %q", v)
+	}
+	page := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("cookie", session)
+	booted.Handler.ServeHTTP(page, req)
+	html := page.Body.String()
+	if !strings.Contains(html, `name="prefix" value="1" checked`) || !strings.Contains(html, `name="grok_failover" value="1" checked`) {
+		t.Fatal("toggles not checked after save")
+	}
+	post(url.Values{})
+	if v, _ := booted.Fob.Settings.Get(proxy.SettingCursorPrefix); v != "0" {
+		t.Fatalf("prefix after clear %q", v)
+	}
+	if v, _ := booted.Fob.Settings.Get(proxy.SettingCursorGrokFailover); v != "0" {
+		t.Fatalf("grok after clear %q", v)
 	}
 }
 
