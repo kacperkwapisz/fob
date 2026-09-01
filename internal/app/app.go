@@ -73,6 +73,10 @@ func page(w http.ResponseWriter, body, title, meta string) {
 	httpx.HTML(w, http.StatusOK, panel.Layout(title, meta, body))
 }
 
+func pageAuthed(w http.ResponseWriter, body, title, meta string) {
+	httpx.HTML(w, http.StatusOK, panel.AuthedLayout(title, meta, body))
+}
+
 func isSecure(publicURL string) bool {
 	return len(publicURL) >= 8 && publicURL[:8] == "https://"
 }

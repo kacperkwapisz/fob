@@ -25,6 +25,9 @@ func registerPanel(mux *httpx.Mux, fob *proxy.Fob, e *env.Env, panelAuth *store.
 	mux.Handle(http.MethodGet, "/panel.js", func(w http.ResponseWriter, _ *http.Request) {
 		httpx.Bytes(w, 200, "text/javascript; charset=utf-8", panel.PanelJS)
 	})
+	mux.Handle(http.MethodGet, "/alpine.js", func(w http.ResponseWriter, _ *http.Request) {
+		httpx.Bytes(w, 200, "text/javascript; charset=utf-8", panel.AlpineJS)
+	})
 	mux.Handle(http.MethodGet, "/", func(w http.ResponseWriter, r *http.Request) {
 		if panelAuth.State().MustReset {
 			page(w, panel.ResetView(""), "Fob — set password", "")
@@ -38,7 +41,7 @@ func registerPanel(mux *httpx.Mux, fob *proxy.Fob, e *env.Env, panelAuth *store.
 		if meta == "" {
 			meta = "local"
 		}
-		page(w, dashboard(fob, settings), "Fob", meta)
+		pageAuthed(w, dashboard(fob, settings), "Fob", meta)
 	})
 	mux.Handle(http.MethodPost, "/login", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := httpx.ParseBody(r)

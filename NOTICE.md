@@ -9,3 +9,5 @@ This project includes adapted MIT-licensed code originally from:
 - Upstream credit in that project also references [ephraimduncan/opencode-cursor](https://github.com/ephraimduncan/opencode-cursor)
 
 Cursor's agent protocol is unofficial and may change without notice.
+
+The operator panel vendors [Alpine.js](https://github.com/alpinejs/alpine) (MIT).

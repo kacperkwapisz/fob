@@ -31,8 +31,20 @@ type SettingsProps struct {
 }
 
 func Layout(title, meta, body string) string {
+	return shell(title, meta, body, false)
+}
+
+func AuthedLayout(title, meta, body string) string {
+	return shell(title, meta, body, true)
+}
+
+func shell(title, meta, body string, authed bool) string {
 	if meta == "" {
 		meta = "local proxy"
+	}
+	lock := ""
+	if authed {
+		lock = `<form method="post" action="/logout"><button class="btn btn-ghost" type="submit">Lock</button></form>`
 	}
 	return fmt.Sprintf(`<!doctype html>
 <html lang="en">
@@ -47,18 +59,44 @@ func Layout(title, meta, body string) string {
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/design.css" />
-    <script src="/panel.js" defer></script>
+    <script defer src="/alpine.js"></script>
+    <script defer src="/panel.js"></script>
   </head>
-  <body>
+  <body x-data="fob">
+    <a class="skip" href="#main">Skip to panel</a>
+    <div class="grain" aria-hidden="true"></div>
     <div class="shell">
       <header class="mast">
-        <div class="wordmark">Fob<span>.</span></div>
-        <div class="mast-meta">%s</div>
+        <a class="wordmark" href="/">Fob<span>.</span></a>
+        <div class="mast-end">
+          <p class="mast-meta">%s</p>
+          %s
+        </div>
       </header>
+      <main id="main">
       %s
+      </main>
     </div>
+    <dialog id="confirm-dlg" class="sheet" aria-labelledby="confirm-title">
+      <h2 id="confirm-title">Please confirm</h2>
+      <p class="lede" id="confirm-msg"></p>
+      <div class="actions">
+        <button class="btn" type="button" data-confirm-cancel>Cancel</button>
+        <button class="btn btn-danger" type="button" data-confirm-ok>Confirm</button>
+      </div>
+    </dialog>
+    <dialog id="minted" class="sheet" aria-labelledby="minted-title">
+      <h2 id="minted-title">New local key</h2>
+      <p class="lede">Copy it now. Fob will not show it again.</p>
+      <p class="secret"></p>
+      <div class="actions">
+        <button class="btn btn-primary" type="button" data-copy>Copy</button>
+        <button class="btn" type="button" data-dismiss>Done</button>
+      </div>
+    </dialog>
+    <div class="toast" role="status" aria-live="polite" x-cloak x-show="toast" x-text="toast"></div>
   </body>
-</html>`, esc(title), esc(meta), body)
+</html>`, esc(title), esc(meta), lock, body)
 }
 
 func LoginView(err string) string {
@@ -66,9 +104,12 @@ func LoginView(err string) string {
       <form class="stack" method="post" action="/login">
         <label class="field">
           <span>Password</span>
-          <input type="password" name="password" autocomplete="current-password" autofocus required />
+          <div class="field-row" x-data="{ show: false }">
+            <input :type="show ? 'text' : 'password'" type="password" name="password" autocomplete="current-password" autofocus required />
+            <button class="btn btn-ghost" type="button" x-cloak @click="show = !show" :aria-pressed="show.toString()" x-text="show ? 'Hide' : 'Show'">Show</button>
+          </div>
         </label>
-        <button class="btn btn-primary" type="submit">Enter</button>
+        <button class="btn btn-primary" type="submit">Unlock</button>
       </form>`)
 }
 
@@ -94,7 +135,7 @@ func DeviceView(provider, url, userCode, deviceCode, err string) string {
 	}
 	var b strings.Builder
 	if userCode != "" {
-		fmt.Fprintf(&b, `<p class="metric">%s<small>user code</small></p>`, esc(userCode))
+		fmt.Fprintf(&b, `<button type="button" class="user-code" data-code="%s" aria-label="Copy user code">%s<small>user code · click to copy</small></button>`, attr(userCode), esc(userCode))
 	}
 	if url != "" {
 		fmt.Fprintf(&b, `<p><a href="%s" target="_blank" rel="noreferrer">Open %s</a></p>`, attr(url), esc(provider))
@@ -135,14 +176,11 @@ func PasteCallbackViewNote(provider, url, hint, note string, danger bool) string
       </form>
       <p class="note">If the browser lands on a working Fob page, you can close it. Otherwise paste the whole failed URL here.</p>`, attr(provider), attr(hint))
 	inner := fmt.Sprintf(`<h1>Finish %s login</h1>%s`, esc(provider), b.String())
-	return `<section class="gate card">` + inner + `</section>`
+	return `<section class="gate drawer">` + inner + `</section>`
 }
 
 func SecretView(provider, url, err string) string {
 	var b strings.Builder
-	if err != "" {
-		b.WriteString(flash("danger", err))
-	}
 	if url != "" {
 		fmt.Fprintf(&b, `<p><a href="%s" target="_blank" rel="noreferrer">Open Cursor Integrations</a></p>`, attr(url))
 	}
@@ -153,30 +191,17 @@ func SecretView(provider, url, err string) string {
         </label>
         <button class="btn btn-primary" type="submit">Connect</button>
       </form>`, attr(provider))
-	return gate("Paste "+provider+" key", "Create a user API key in Cursor → Integrations, then paste it here.\n        If exchange fails, use Login instead — that is the CLI subscription path.", err, b.String())
+	return gate("Paste "+provider+" key", "Create a user API key in Cursor → Integrations, then paste it here. If exchange fails, use Login instead — that is the CLI subscription path.", err, b.String())
 }
 
 func Dashboard(props DashboardProps) string {
 	var b strings.Builder
-	b.WriteString(`
-    <div class="flash" id="minted" hidden>
-      <strong>New local key</strong>
-      <p>Copy it now. Fob will not show it again.</p>
-      <p class="secret"></p>
-      <div class="actions">
-        <button class="btn" type="button" data-copy>Copy</button>
-        <button class="btn" type="button" data-dismiss>Done</button>
-      </div>
-    </div>
-    <div class="deck">`)
+	b.WriteString(`<h1 class="sr-only">Panel</h1><div class="deck">`)
+	b.WriteString(meterCard(props.Usage))
 	b.WriteString(loginsCard(props))
 	b.WriteString(keysCard(props.Keys))
-	b.WriteString(meterCard(props.Usage))
 	b.WriteString(cursorSettingsCard(props.Settings))
-	b.WriteString(`</div>
-    <form method="post" action="/logout" style="margin-top:2rem">
-      <button class="btn" type="submit">Lock panel</button>
-    </form>`)
+	b.WriteString(`</div>`)
 	return b.String()
 }
 
@@ -195,35 +220,38 @@ func loginsCard(props DashboardProps) string {
 		{domain.ProviderCursor, "Cursor"},
 	}
 	var b strings.Builder
-	b.WriteString(`<section class="card"><h2>Logins</h2><p class="lede">OAuth into the subscriptions you already pay for. After Claude or Codex, paste the failed localhost URL back here.</p>`)
+	b.WriteString(`<section class="drawer logins-drawer"><header class="drawer-h"><h2>Logins</h2><p class="lede">OAuth into the subscriptions you already pay for. After Claude or Codex, paste the failed localhost URL back here.</p></header><ul class="roster">`)
 	for _, p := range providers {
 		creds := byProvider[p.id]
-		b.WriteString(`<div class="row"><div><strong>`)
-		b.WriteString(esc(p.label))
-		b.WriteString(`</strong><div class="lede" style="margin:0">`)
-		if len(creds) == 0 {
-			b.WriteString("Not connected")
-		} else {
+		lamp := "lamp-off"
+		status := "Not connected"
+		if len(creds) > 0 {
+			lamp = "lamp-on"
+			labels := make([]string, 0, len(creds))
 			for _, c := range creds {
-				b.WriteString(esc(c.Label))
-				b.WriteString(" ")
+				labels = append(labels, c.Label)
 			}
+			status = strings.Join(labels, " · ")
 		}
-		b.WriteString(`</div></div><div class="actions">`)
+		fmt.Fprintf(&b, `<li class="roster-row"><div class="roster-id"><span class="lamp %s" aria-hidden="true"></span><div class="roster-copy"><strong>%s</strong><span class="meta">%s</span></div></div><div class="actions">`, lamp, esc(p.label), esc(status))
 		for _, c := range creds {
-			fmt.Fprintf(&b, `<form method="post" action="/credentials/%s/delete" data-confirm="Disconnect %s?"><button class="btn btn-danger" type="submit">Out</button></form>`, attr(c.ID), attr(c.Label))
+			fmt.Fprintf(&b, `<form method="post" action="/credentials/%s/delete" data-confirm="Disconnect %s?"><button class="btn btn-ghost btn-danger" type="submit">Disconnect</button></form>`, attr(c.ID), attr(c.Label))
 		}
 		label := "Login"
 		if len(creds) > 0 {
 			label = "Add"
 		}
-		fmt.Fprintf(&b, `<form method="post" action="/login/%s"><button class="btn btn-primary" type="submit">%s</button></form>`, attr(string(p.id)), label)
-		if p.id == domain.ProviderCursor {
-			b.WriteString(`<form method="post" action="/login/cursor?mode=secret"><button class="btn" type="submit">Paste key</button></form>`)
+		kind := "btn-primary"
+		if len(creds) > 0 {
+			kind = "btn-ghost"
 		}
-		b.WriteString(`</div></div>`)
+		fmt.Fprintf(&b, `<form method="post" action="/login/%s"><button class="btn %s" type="submit">%s</button></form>`, attr(string(p.id)), kind, label)
+		if p.id == domain.ProviderCursor {
+			b.WriteString(`<form method="post" action="/login/cursor?mode=secret"><button class="btn btn-ghost" type="submit">Paste key</button></form>`)
+		}
+		b.WriteString(`</div></li>`)
 	}
-	b.WriteString(`</section>`)
+	b.WriteString(`</ul></section>`)
 	return b.String()
 }
 
@@ -235,11 +263,11 @@ func keysCard(keys []domain.LocalKey) string {
 		}
 	}
 	var b strings.Builder
-	b.WriteString(`<section class="card"><h2>Keys</h2><p class="lede">Hand a <code>sk-fob-…</code> to Cursor, Claude Code, OpenCode.</p>`)
+	b.WriteString(`<section class="drawer keys-drawer"><header class="drawer-h"><h2>Keys</h2><p class="lede">Hand a <code>sk-fob-…</code> to Cursor, Claude Code, OpenCode.</p></header>`)
 	if len(live) == 0 {
 		b.WriteString(`<p class="empty">No keys yet. Mint one and paste it into a tool as the OpenAI API key.</p>`)
 	} else {
-		b.WriteString(`<table class="table"><thead><tr><th>Name</th><th>Prefix</th><th></th></tr></thead><tbody>`)
+		b.WriteString(`<ul class="fobs">`)
 		for _, k := range live {
 			scope := "all"
 			if len(k.Providers) > 0 {
@@ -249,12 +277,12 @@ func keysCard(keys []domain.LocalKey) string {
 				}
 				scope = strings.Join(parts, " ")
 			}
-			fmt.Fprintf(&b, `<tr><td>%s<br /><span class="pill">%s</span></td><td>%s…</td><td><form method="post" action="/keys/%s/revoke" data-confirm="Revoke %s? Tools using it will 401."><button class="btn btn-danger" type="submit">Revoke</button></form></td></tr>`,
-				esc(k.Name), esc(scope), esc(k.Prefix), attr(k.ID), attr(k.Name))
+			fmt.Fprintf(&b, `<li class="fob-tag"><span class="fob-hole" aria-hidden="true"></span><div class="fob-copy"><strong>%s</strong><span class="mono">%s…</span> <span class="pill">%s</span></div><form method="post" action="/keys/%s/revoke" data-confirm="Revoke %s? Tools using it will 401."><button class="btn btn-ghost btn-danger" type="submit">Revoke</button></form></li>`,
+				esc(k.Name), esc(k.Prefix), esc(scope), attr(k.ID), attr(k.Name))
 		}
-		b.WriteString(`</tbody></table>`)
+		b.WriteString(`</ul>`)
 	}
-	b.WriteString(`<form class="stack" id="mint" method="post" action="/keys" style="margin-top:1rem">
+	b.WriteString(`<form class="stack mint" id="mint" method="post" action="/keys">
         <label class="field">
           <span>Name</span>
           <input type="text" name="name" placeholder="opencode" required />
@@ -266,20 +294,30 @@ func keysCard(keys []domain.LocalKey) string {
 
 func meterCard(usage UsageProps) string {
 	var b strings.Builder
-	b.WriteString(`<section class="card"><h2>Meter</h2><p class="lede">API-equivalent $. Not your subscription bill.</p><div class="metrics">`)
-	fmt.Fprintf(&b, `<div class="metric">%s<small>today</small></div>`, fmtUSD(usage.Today.USD))
-	fmt.Fprintf(&b, `<div class="metric">%s<small>7 days</small></div>`, fmtUSD(usage.D7.USD))
-	fmt.Fprintf(&b, `<div class="metric">%s<small>tokens today</small></div>`, fmtInt(usage.Today.PromptTokens+usage.Today.CompletionTokens))
-	fmt.Fprintf(&b, `<div class="metric">%s<small>requests today</small></div>`, fmtInt(usage.Today.Requests))
+	b.WriteString(`<section class="drawer meter-board"><header class="drawer-h"><h2>Meter</h2><p class="lede">API-equivalent $. Not your subscription bill.</p></header><div class="dials">`)
+	fmt.Fprintf(&b, `<div class="dial"><span class="dial-value">%s</span><span class="dial-label">today</span></div>`, fmtUSD(usage.Today.USD))
+	fmt.Fprintf(&b, `<div class="dial"><span class="dial-value">%s</span><span class="dial-label">7 days</span></div>`, fmtUSD(usage.D7.USD))
+	fmt.Fprintf(&b, `<div class="dial"><span class="dial-value">%s</span><span class="dial-label">tokens today</span></div>`, fmtInt(usage.Today.PromptTokens+usage.Today.CompletionTokens))
+	fmt.Fprintf(&b, `<div class="dial"><span class="dial-value">%s</span><span class="dial-label">requests today</span></div>`, fmtInt(usage.Today.Requests))
 	b.WriteString(`</div>`)
 	if len(usage.ByProvider) == 0 {
 		b.WriteString(`<p class="empty">No traffic yet. Point a tool at <code>/v1</code>.</p>`)
 	} else {
-		b.WriteString(`<table class="table"><thead><tr><th>Provider</th><th>$</th></tr></thead><tbody>`)
+		max := 0.0
 		for _, r := range usage.ByProvider {
-			fmt.Fprintf(&b, `<tr><td>%s</td><td>%s</td></tr>`, esc(r.Key), fmtUSD(r.USD))
+			if r.USD > max {
+				max = r.USD
+			}
 		}
-		b.WriteString(`</tbody></table><table class="table" style="margin-top:1rem"><thead><tr><th>Model</th><th>$</th></tr></thead><tbody>`)
+		b.WriteString(`<div class="bars">`)
+		for _, r := range usage.ByProvider {
+			scale := 0.0
+			if max > 0 {
+				scale = r.USD / max
+			}
+			fmt.Fprintf(&b, `<div class="bar-row"><span class="bar-label">%s</span><span class="bar-track"><span class="bar-fill" style="transform:scaleX(%.4f)"></span></span><span class="bar-val">%s</span></div>`, esc(prettyKey(r.Key)), scale, fmtUSD(r.USD))
+		}
+		b.WriteString(`</div><table class="table"><thead><tr><th>Model</th><th>$</th></tr></thead><tbody>`)
 		limit := len(usage.ByModel)
 		if limit > 8 {
 			limit = 8
@@ -302,17 +340,27 @@ func cursorSettingsCard(settings SettingsProps) string {
 	if settings.GrokFailover {
 		grok = "checked"
 	}
-	return fmt.Sprintf(`<section class="card">
-      <h2>Cursor</h2>
-      <p class="lede">Prefix listed Cursor models with <code>cursor/</code>. Grok failover maps <code>grok-4.5</code> onto Cursor Grok when the Grok sub is exhausted.</p>
-      <form method="post" action="/settings/cursor" class="stack">
-        <label class="field" style="flex-direction:row;gap:.6rem;align-items:center">
+	return fmt.Sprintf(`<section class="drawer settings-drawer">
+      <header class="drawer-h">
+        <h2>Cursor</h2>
+        <p class="lede">Prefix listed Cursor models with <code>cursor/</code>. Grok failover maps <code>grok-4.5</code> onto Cursor Grok when the Grok sub is exhausted.</p>
+      </header>
+      <form method="post" action="/settings/cursor" class="stack" data-ajax>
+        <label class="switch">
           <input type="checkbox" name="prefix" value="1" %s />
-          <span>Prefix Cursor models</span>
+          <span class="track" aria-hidden="true"></span>
+          <span class="switch-copy">
+            <strong>Prefix Cursor models</strong>
+            <span>List them as cursor/…</span>
+          </span>
         </label>
-        <label class="field" style="flex-direction:row;gap:.6rem;align-items:center">
+        <label class="switch">
           <input type="checkbox" name="grok_failover" value="1" %s />
-          <span>Grok ↔ Cursor failover</span>
+          <span class="track" aria-hidden="true"></span>
+          <span class="switch-copy">
+            <strong>Grok ↔ Cursor failover</strong>
+            <span>Fall through when Grok is exhausted</span>
+          </span>
         </label>
         <button class="btn" type="submit">Save</button>
       </form>
@@ -321,7 +369,7 @@ func cursorSettingsCard(settings SettingsProps) string {
 
 func gate(title, lede, err, form string) string {
 	var b strings.Builder
-	b.WriteString(`<section class="gate card"><h1>`)
+	b.WriteString(`<section class="gate drawer"><h1>`)
 	b.WriteString(esc(title))
 	b.WriteString(`</h1><p class="lede">`)
 	b.WriteString(esc(lede))
@@ -352,8 +400,15 @@ func attr(s string) string {
 	return template.HTMLEscapeString(s)
 }
 
+func prettyKey(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
 func fmtUSD(n float64) string {
-	return "$" + strconv.FormatFloat(n, 'f', -1, 64)
+	return "$" + strconv.FormatFloat(n, 'f', 2, 64)
 }
 
 func fmtInt(n int64) string {

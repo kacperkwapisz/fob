@@ -149,7 +149,7 @@ func TestMintRedirectsWithoutSecret(t *testing.T) {
 	pageReq.Header.Set("cookie", session)
 	booted.Handler.ServeHTTP(pageRes, pageReq)
 	html := pageRes.Body.String()
-	for _, want := range []string{"opencode", "sk-fob-", "Logins", "Keys", "Meter", "Cursor"} {
+	for _, want := range []string{"opencode", "sk-fob-", "Logins", "Keys", "Meter", "Cursor", "Lock", "/alpine.js"} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("missing %q", want)
 		}
@@ -255,6 +255,19 @@ func TestPanelJS(t *testing.T) {
 	booted.Handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/panel.js", nil))
 	if res.Code != 200 || !strings.Contains(res.Body.String(), "/api/panel/keys") {
 		t.Fatal(res.Body.String())
+	}
+}
+
+func TestAlpineJS(t *testing.T) {
+	booted, err := Create(map[string]string{"JWT_SECRET": secret, "DATABASE_PATH": ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer booted.DB.Close()
+	res := httptest.NewRecorder()
+	booted.Handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/alpine.js", nil))
+	if res.Code != 200 || !strings.Contains(res.Body.String(), "Alpine") {
+		t.Fatalf("status %d len %d", res.Code, res.Body.Len())
 	}
 }
 

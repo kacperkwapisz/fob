@@ -7,3 +7,6 @@ var DesignCSS []byte
 
 //go:embed panel.js
 var PanelJS []byte
+
+//go:embed alpine.min.js
+var AlpineJS []byte
