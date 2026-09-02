@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/kacperkwapisz/fob/internal/domain"
 	"github.com/kacperkwapisz/fob/internal/store"
@@ -26,6 +27,7 @@ type UsageProps struct {
 	ByProvider []store.UsageBreakdown `json:"byProvider"`
 	ByModel    []store.UsageBreakdown `json:"byModel"`
 	Daily      []store.UsagePoint     `json:"daily"`
+	Trends     []store.UsagePoint     `json:"trends"`
 }
 
 type SettingsProps struct {
@@ -49,10 +51,10 @@ func Layout(title, meta, body string) string {
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/design.css?v=0.6.2" />
+    <link rel="stylesheet" href="/design.css?v=0.6.3" />
     <script>document.documentElement.classList.add("js")</script>
     <script src="/alpine.min.js" defer></script>
-    <script src="/panel.js?v=0.6.2" defer></script>
+    <script src="/panel.js?v=0.6.3" defer></script>
   </head>
   <body>
     <a class="skip" href="#main">Skip to content</a>
@@ -189,6 +191,7 @@ func Dashboard(props DashboardProps) string {
       </div>
     </div>
     <div class="deck">`)
+	b.WriteString(usageTrendsCard(props.Usage))
 	b.WriteString(meterCard(props.Usage))
 	b.WriteString(loginsCard(props))
 	b.WriteString(keysCard(props.Keys))
@@ -286,6 +289,62 @@ func keysCard(keys []domain.LocalKey) string {
         <button class="btn btn-primary" type="submit">Mint key</button>
       </form></section>`)
 	return b.String()
+}
+
+func usageTrendsCard(usage UsageProps) string {
+	trends := usage.Trends
+	if trends == nil {
+		trends = []store.UsagePoint{}
+	}
+	raw, _ := json.Marshal(trends)
+	var window store.UsageTotals
+	var peak int64
+	hasTraffic := false
+	for _, day := range trends {
+		window.PromptTokens += day.PromptTokens
+		window.CompletionTokens += day.CompletionTokens
+		tokens := day.PromptTokens + day.CompletionTokens
+		if tokens > peak {
+			peak = tokens
+		}
+		if day.Requests > 0 {
+			hasTraffic = true
+		}
+	}
+	var b strings.Builder
+	b.WriteString(`<section class="card card-trends"><div class="card-head"><h2>Usage Trends</h2>`)
+	if len(trends) > 0 {
+		fmt.Fprintf(&b, `<p class="lede">Tokens per UTC day. %s – %s.</p></div>`, esc(shortDay(trends[0].Day)), esc(shortDay(trends[len(trends)-1].Day)))
+	} else {
+		b.WriteString(`<p class="lede">Tokens per UTC day. Last 14 days.</p></div>`)
+	}
+	b.WriteString(`<div class="kpis">`)
+	fmt.Fprintf(&b, `<div class="kpi kpi-signal"><div class="kpi-value">%s</div><div class="kpi-label">%d days</div></div>`, fmtInt(window.PromptTokens+window.CompletionTokens), max(len(trends), 14))
+	fmt.Fprintf(&b, `<div class="kpi"><div class="kpi-value">%s</div><div class="kpi-label">peak day</div></div>`, fmtInt(peak))
+	fmt.Fprintf(&b, `<div class="kpi"><div class="kpi-value">%s</div><div class="kpi-label">prompt</div></div>`, fmtInt(window.PromptTokens))
+	fmt.Fprintf(&b, `<div class="kpi"><div class="kpi-value">%s</div><div class="kpi-label">completion</div></div>`, fmtInt(window.CompletionTokens))
+	b.WriteString(`</div><figure class="chart">
+        <figcaption>Prompt / completion</figcaption>
+        <div class="chart-frame">
+          <canvas id="chart-trends" role="img" aria-label="Token usage over the last fourteen days"></canvas>
+          <div class="chart-tip" id="chart-trends-tip" hidden></div>
+        </div>
+      </figure>`)
+	if !hasTraffic {
+		b.WriteString(`<p class="empty">No traffic yet. Point a tool at <code>/v1</code>.</p>`)
+	}
+	b.WriteString(`<script type="application/json" id="trends-data">`)
+	b.Write(raw)
+	b.WriteString(`</script></section>`)
+	return b.String()
+}
+
+func shortDay(iso string) string {
+	t, err := time.Parse("2006-01-02", iso)
+	if err != nil {
+		return iso
+	}
+	return t.Format("2 Jan")
 }
 
 func meterCard(usage UsageProps) string {

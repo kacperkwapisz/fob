@@ -2,6 +2,7 @@ package store
 
 import (
 	"testing"
+	"time"
 
 	"github.com/kacperkwapisz/fob/internal/db"
 	"github.com/kacperkwapisz/fob/internal/domain"
@@ -51,16 +52,19 @@ func TestUsageDailyFillsGaps(t *testing.T) {
 	}
 	defer d.Close()
 	usage := NewUsageStore(d)
-	threeDaysAgo := nowMs() - 3*24*60*60*1000
-	if err := usage.Record(domain.UsageEvent{
-		TS:       threeDaysAgo,
-		Provider: domain.ProviderClaude,
-		Model:    "claude-opus-4-7",
-		Inbound:  domain.InboundOpenAIChat,
-		Status:   "ok",
-		USD:      1.25,
-	}); err != nil {
-		t.Fatal(err)
+	now := time.Now().UTC()
+	noon := func(daysAgo int) int64 {
+		day := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC).AddDate(0, 0, -daysAgo)
+		return day.UnixMilli()
+	}
+	for _, ev := range []domain.UsageEvent{
+		{TS: noon(20), Provider: domain.ProviderClaude, Model: "old", Inbound: domain.InboundOpenAIChat, Status: "ok", USD: 4, PromptTokens: 40},
+		{TS: noon(3), Provider: domain.ProviderClaude, Model: "mid", Inbound: domain.InboundOpenAIChat, Status: "ok", USD: 1.25, PromptTokens: 5, CompletionTokens: 1},
+		{TS: noon(-1), Provider: domain.ProviderClaude, Model: "future", Inbound: domain.InboundOpenAIChat, Status: "ok", USD: 9, PromptTokens: 99},
+	} {
+		if err := usage.Record(ev); err != nil {
+			t.Fatal(err)
+		}
 	}
 	points, err := usage.Daily(7)
 	if err != nil {
@@ -69,6 +73,7 @@ func TestUsageDailyFillsGaps(t *testing.T) {
 	if len(points) != 7 {
 		t.Fatalf("len %d", len(points))
 	}
+	wantDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -3).Format("2006-01-02")
 	var hits int
 	var sum float64
 	for _, p := range points {
@@ -82,6 +87,9 @@ func TestUsageDailyFillsGaps(t *testing.T) {
 	}
 	if hits != 1 || sum != 1.25 {
 		t.Fatalf("hits %d sum %v points %+v", hits, sum, points)
+	}
+	if points[3].Day != wantDay || points[3].PromptTokens != 5 {
+		t.Fatalf("3d ago %+v want %s", points[3], wantDay)
 	}
 }
 
