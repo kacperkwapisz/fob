@@ -44,6 +44,47 @@ func TestUsageAndPrices(t *testing.T) {
 	}
 }
 
+func TestUsageDailyFillsGaps(t *testing.T) {
+	d, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	usage := NewUsageStore(d)
+	threeDaysAgo := nowMs() - 3*24*60*60*1000
+	if err := usage.Record(domain.UsageEvent{
+		TS:       threeDaysAgo,
+		Provider: domain.ProviderClaude,
+		Model:    "claude-opus-4-7",
+		Inbound:  domain.InboundOpenAIChat,
+		Status:   "ok",
+		USD:      1.25,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	points, err := usage.Daily(7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(points) != 7 {
+		t.Fatalf("len %d", len(points))
+	}
+	var hits int
+	var sum float64
+	for _, p := range points {
+		if p.Day == "" {
+			t.Fatal("empty day")
+		}
+		if p.USD > 0 {
+			hits++
+			sum += p.USD
+		}
+	}
+	if hits != 1 || sum != 1.25 {
+		t.Fatalf("hits %d sum %v points %+v", hits, sum, points)
+	}
+}
+
 func TestCursorAutoHasNoListPrice(t *testing.T) {
 	d, err := db.Open(":memory:")
 	if err != nil {
