@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kacperkwapisz/fob/internal/domain"
 	"github.com/kacperkwapisz/fob/internal/store"
@@ -149,7 +150,7 @@ func TestMintRedirectsWithoutSecret(t *testing.T) {
 	pageReq.Header.Set("cookie", session)
 	booted.Handler.ServeHTTP(pageRes, pageReq)
 	html := pageRes.Body.String()
-	for _, want := range []string{"opencode", "sk-fob-", "Logins", "Keys", "Meter", "Cursor"} {
+	for _, want := range []string{"opencode", "sk-fob-", "Logins", "Keys", "Meter", "Usage Trends", "Cursor"} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("missing %q", want)
 		}
@@ -228,6 +229,33 @@ func TestConnectedLoginsRenderFromVault(t *testing.T) {
 	}
 }
 
+func TestUsageTrendsRendersChart(t *testing.T) {
+	booted, session := unlocked(t)
+	defer booted.DB.Close()
+	if err := booted.Fob.Usage.Record(domain.UsageEvent{
+		TS:               time.Now().UnixMilli(),
+		Provider:         domain.ProviderClaude,
+		Model:            "claude-opus-4-7",
+		Inbound:          domain.InboundOpenAIChat,
+		PromptTokens:     1200,
+		CompletionTokens: 300,
+		Status:           "ok",
+		USD:              0.02,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("cookie", session)
+	booted.Handler.ServeHTTP(res, req)
+	html := res.Body.String()
+	for _, want := range []string{"Usage Trends", "trend-stack", "1,200", "300", "1,500", "prompt", "completion"} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("missing %q", want)
+		}
+	}
+}
+
 func TestDesignCSS(t *testing.T) {
 	booted, err := Create(map[string]string{"JWT_SECRET": secret, "DATABASE_PATH": ":memory:"})
 	if err != nil {
@@ -240,7 +268,7 @@ func TestDesignCSS(t *testing.T) {
 		t.Fatal(res.Code)
 	}
 	css := res.Body.String()
-	if !strings.Contains(css, "--accent:") || !strings.Contains(css, "--font-display:") {
+	if !strings.Contains(css, "--accent:") || !strings.Contains(css, "--font-display:") || !strings.Contains(css, ".trend") {
 		t.Fatal(css[:200])
 	}
 }

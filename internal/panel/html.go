@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/kacperkwapisz/fob/internal/domain"
 	"github.com/kacperkwapisz/fob/internal/store"
@@ -23,6 +24,7 @@ type UsageProps struct {
 	D7         store.UsageTotals
 	ByProvider []store.UsageBreakdown
 	ByModel    []store.UsageBreakdown
+	Trends     []store.UsageDay
 }
 
 type SettingsProps struct {
@@ -172,6 +174,7 @@ func Dashboard(props DashboardProps) string {
 	b.WriteString(loginsCard(props))
 	b.WriteString(keysCard(props.Keys))
 	b.WriteString(meterCard(props.Usage))
+	b.WriteString(usageTrendsCard(props.Usage))
 	b.WriteString(cursorSettingsCard(props.Settings))
 	b.WriteString(`</div>
     <form method="post" action="/logout" style="margin-top:2rem">
@@ -291,6 +294,72 @@ func meterCard(usage UsageProps) string {
 	}
 	b.WriteString(`</section>`)
 	return b.String()
+}
+
+func usageTrendsCard(usage UsageProps) string {
+	var b strings.Builder
+	b.WriteString(`<section class="card card-wide"><h2>Usage Trends</h2>`)
+	if !trendHasTraffic(usage.Trends) {
+		b.WriteString(`<p class="lede">Tokens per day. Last 14 days.</p><p class="empty">No traffic yet. Point a tool at <code>/v1</code>.</p></section>`)
+		return b.String()
+	}
+	from := time.UnixMilli(usage.Trends[0].Start).In(time.Local)
+	to := time.UnixMilli(usage.Trends[len(usage.Trends)-1].Start).In(time.Local)
+	fmt.Fprintf(&b, `<p class="lede">Tokens per day. %s – %s.</p>`, esc(from.Format("2 Jan")), esc(to.Format("2 Jan")))
+	var window store.UsageTotals
+	var peak int64
+	for _, day := range usage.Trends {
+		window.PromptTokens += day.PromptTokens
+		window.CompletionTokens += day.CompletionTokens
+		tokens := day.PromptTokens + day.CompletionTokens
+		if tokens > peak {
+			peak = tokens
+		}
+	}
+	b.WriteString(`<div class="metrics">`)
+	fmt.Fprintf(&b, `<div class="metric">%s<small>%d days</small></div>`, fmtInt(window.PromptTokens+window.CompletionTokens), len(usage.Trends))
+	fmt.Fprintf(&b, `<div class="metric">%s<small>peak day</small></div>`, fmtInt(peak))
+	fmt.Fprintf(&b, `<div class="metric">%s<small>prompt</small></div>`, fmtInt(window.PromptTokens))
+	fmt.Fprintf(&b, `<div class="metric">%s<small>completion</small></div>`, fmtInt(window.CompletionTokens))
+	b.WriteString(`</div>`)
+	fmt.Fprintf(&b, `<div class="trend" style="grid-template-columns:repeat(%d,minmax(0,1fr))" role="img" aria-label="Token usage over %d days, %s total">`,
+		len(usage.Trends), len(usage.Trends), fmtInt(window.PromptTokens+window.CompletionTokens))
+	for i, day := range usage.Trends {
+		tokens := day.PromptTokens + day.CompletionTokens
+		height := 0.0
+		if peak > 0 {
+			height = float64(tokens) / float64(peak) * 100
+		}
+		if tokens > 0 && height < 3 {
+			height = 3
+		}
+		when := time.UnixMilli(day.Start).In(time.Local)
+		label := when.Format("2")
+		if i == 0 || i == len(usage.Trends)-1 || when.Day() == 1 {
+			label = when.Format("2 Jan")
+		}
+		title := fmt.Sprintf("%s · %s prompt · %s completion",
+			when.Format("2 Jan"), fmtInt(day.PromptTokens), fmtInt(day.CompletionTokens))
+		fmt.Fprintf(&b, `<div class="trend-col" title="%s"><div class="trend-track">`, attr(title))
+		if tokens > 0 {
+			fmt.Fprintf(&b, `<div class="trend-stack" style="height:%.1f%%">`, height)
+			fmt.Fprintf(&b, `<div class="trend-prompt" style="flex:%d"></div>`, day.PromptTokens)
+			fmt.Fprintf(&b, `<div class="trend-completion" style="flex:%d"></div>`, day.CompletionTokens)
+			b.WriteString(`</div>`)
+		}
+		fmt.Fprintf(&b, `</div><span class="trend-day">%s</span></div>`, esc(label))
+	}
+	b.WriteString(`</div><p class="trend-legend"><span><span class="swatch swatch-prompt"></span>prompt</span><span><span class="swatch swatch-completion"></span>completion</span></p></section>`)
+	return b.String()
+}
+
+func trendHasTraffic(days []store.UsageDay) bool {
+	for _, day := range days {
+		if day.Requests > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func cursorSettingsCard(settings SettingsProps) string {

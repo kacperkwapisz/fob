@@ -2,6 +2,7 @@ package store
 
 import (
 	"testing"
+	"time"
 
 	"github.com/kacperkwapisz/fob/internal/db"
 	"github.com/kacperkwapisz/fob/internal/domain"
@@ -41,6 +42,52 @@ func TestUsageAndPrices(t *testing.T) {
 	}
 	if today.Requests != 1 || today.PromptTokens != 1_000_000 || today.USD != 5 {
 		t.Fatalf("%+v", today)
+	}
+}
+
+func TestUsageDailyFillsEmptyDays(t *testing.T) {
+	d, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	usage := NewUsageStore(d)
+	now := time.UnixMilli(nowMs()).Local()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	noon := func(daysAgo int) int64 {
+		return today.AddDate(0, 0, -daysAgo).Add(12 * time.Hour).UnixMilli()
+	}
+	for _, ev := range []domain.UsageEvent{
+		{TS: noon(20), Provider: domain.ProviderClaude, Model: "old", Inbound: domain.InboundOpenAIChat, PromptTokens: 99, Status: "ok"},
+		{TS: noon(3), Provider: domain.ProviderClaude, Model: "mid", Inbound: domain.InboundOpenAIChat, PromptTokens: 5, CompletionTokens: 1, Status: "ok"},
+		{TS: now.UnixMilli(), Provider: domain.ProviderCodex, Model: "new", Inbound: domain.InboundOpenAIChat, PromptTokens: 10, CompletionTokens: 2, Status: "ok"},
+	} {
+		if err := usage.Record(ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	days, err := usage.Daily(14)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(days) != 14 {
+		t.Fatalf("len %d", len(days))
+	}
+	if days[13].Start != today.UnixMilli() {
+		t.Fatalf("today start %d want %d", days[13].Start, today.UnixMilli())
+	}
+	if days[13].PromptTokens != 10 || days[13].CompletionTokens != 2 || days[13].Requests != 1 {
+		t.Fatalf("today %+v", days[13])
+	}
+	if days[10].PromptTokens != 5 || days[10].CompletionTokens != 1 {
+		t.Fatalf("3d ago %+v", days[10])
+	}
+	var prompt int64
+	for _, day := range days {
+		prompt += day.PromptTokens
+	}
+	if prompt != 15 {
+		t.Fatalf("window prompt %d", prompt)
 	}
 }
 
