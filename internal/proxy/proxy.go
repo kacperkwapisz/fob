@@ -197,31 +197,47 @@ func Proxy(ctx context.Context, fob *Fob, req Request) (Result, error) {
 
 func ListModels(fob *Fob) []domain.ModelInfo {
 	creds, _ := fob.Vault.List()
-	seen := map[domain.ProviderID]bool{}
-	var order []domain.ProviderID
+	seenProv := map[domain.ProviderID]bool{}
+	var native []domain.ProviderID
+	cursorOn := false
 	for _, c := range creds {
-		if seen[c.Provider] {
+		if seenProv[c.Provider] {
 			continue
 		}
-		seen[c.Provider] = true
-		order = append(order, c.Provider)
+		seenProv[c.Provider] = true
+		if c.Provider == domain.ProviderCursor {
+			cursorOn = true
+			continue
+		}
+		native = append(native, c.Provider)
 	}
 	prefix := false
 	if fob.Settings != nil {
 		v, _ := fob.Settings.Get(SettingCursorPrefix)
 		prefix = v == "1"
 	}
+	seenID := map[string]bool{}
 	var models []domain.ModelInfo
-	for _, providerID := range order {
+	add := func(list []domain.ModelInfo) {
+		for _, m := range list {
+			if seenID[m.ID] {
+				continue
+			}
+			seenID[m.ID] = true
+			models = append(models, m)
+		}
+	}
+	for _, providerID := range native {
 		ex := fob.Executors[providerID]
 		if ex == nil {
 			continue
 		}
-		if providerID == domain.ProviderCursor {
-			models = append(models, cursorModelsForList(ex, prefix)...)
-			continue
+		add(ex.Models())
+	}
+	if cursorOn {
+		if ex := fob.Executors[domain.ProviderCursor]; ex != nil {
+			add(cursorModelsForList(ex, prefix))
 		}
-		models = append(models, ex.Models()...)
 	}
 	if models == nil {
 		models = []domain.ModelInfo{}

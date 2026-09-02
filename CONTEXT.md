@@ -24,6 +24,10 @@ _Avoid_: auth dir, keychain
 Append-only usage events plus API-equivalent dollar estimates from models.dev list prices.
 _Avoid_: billing, invoice, quota
 
+**Sub**:
+Live remaining windows on a Credential’s subscription, fetched on demand from the provider.
+_Avoid_: quota, billing, invoice
+
 **Setting**:
 A panel-editable key/value in SQLite. Not boot geometry.
 _Avoid_: config, env

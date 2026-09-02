@@ -14,19 +14,20 @@ import (
 	"github.com/kacperkwapisz/fob/internal/proxy"
 	"github.com/kacperkwapisz/fob/internal/session"
 	"github.com/kacperkwapisz/fob/internal/store"
+	"github.com/kacperkwapisz/fob/internal/sub"
 )
 
-const (
-	dayMS     = 24 * 60 * 60 * 1000
-	trendDays = 14
-)
+const dayMS = 24 * 60 * 60 * 1000
 
 func registerPanel(mux *httpx.Mux, fob *proxy.Fob, e *env.Env, panelAuth *store.PanelAuth, settings *store.SettingsStore, logins map[domain.ProviderID]oauth.ProviderLogin) {
 	mux.Handle(http.MethodGet, "/design.css", func(w http.ResponseWriter, _ *http.Request) {
-		httpx.Bytes(w, 200, "text/css; charset=utf-8", panel.DesignCSS)
+		httpx.Static(w, "text/css; charset=utf-8", panel.DesignCSS)
 	})
 	mux.Handle(http.MethodGet, "/panel.js", func(w http.ResponseWriter, _ *http.Request) {
-		httpx.Bytes(w, 200, "text/javascript; charset=utf-8", panel.PanelJS)
+		httpx.Static(w, "text/javascript; charset=utf-8", panel.PanelJS)
+	})
+	mux.Handle(http.MethodGet, "/alpine.min.js", func(w http.ResponseWriter, _ *http.Request) {
+		httpx.Bytes(w, 200, "text/javascript; charset=utf-8", panel.AlpineJS)
 	})
 	mux.Handle(http.MethodGet, "/", func(w http.ResponseWriter, r *http.Request) {
 		if panelAuth.State().MustReset {
@@ -252,6 +253,13 @@ func registerPanel(mux *httpx.Mux, fob *proxy.Fob, e *env.Env, panelAuth *store.
 		_, _ = fob.Keys.Revoke(httpx.Param(r, "id"))
 		httpx.SeeOther(w, "/", "")
 	})
+	mux.Handle(http.MethodGet, "/api/panel/sub", func(w http.ResponseWriter, r *http.Request) {
+		if !panelAuthed(r, e, panelAuth) {
+			httpx.PanelUnauthorized(w, "")
+			return
+		}
+		httpx.JSON(w, 200, map[string]any{"credentials": sub.Collect(r.Context(), fob.Vault, fob.Executors)})
+	})
 	mux.Handle(http.MethodPost, "/api/panel/keys", func(w http.ResponseWriter, r *http.Request) {
 		if !panelAuthed(r, e, panelAuth) {
 			httpx.PanelUnauthorized(w, "")
@@ -283,15 +291,23 @@ func dashboard(fob *proxy.Fob, settings *store.SettingsStore) string {
 	d7, _ := fob.Usage.Since(7 * dayMS)
 	byProvider, _ := fob.Usage.GroupBy(7*dayMS, "provider")
 	byModel, _ := fob.Usage.GroupBy(7*dayMS, "model")
-	trends, _ := fob.Usage.Daily(trendDays)
+	daily, _ := fob.Usage.Daily(7)
 	prefix, _ := settings.Get(proxy.SettingCursorPrefix)
 	grok, _ := settings.Get(proxy.SettingCursorGrokFailover)
+	subN := 0
+	for _, c := range creds {
+		switch c.Provider {
+		case domain.ProviderClaude, domain.ProviderCodex, domain.ProviderGrok, domain.ProviderCursor:
+			subN++
+		}
+	}
 	return panel.Dashboard(panel.DashboardProps{
 		Credentials: creds,
 		Keys:        keys,
 		Usage: panel.UsageProps{
-			Today: today, D7: d7, ByProvider: byProvider, ByModel: byModel, Trends: trends,
+			Today: today, D7: d7, ByProvider: byProvider, ByModel: byModel, Daily: daily,
 		},
+		SubCount: subN,
 		Settings: panel.SettingsProps{CursorPrefix: prefix == "1", GrokFailover: grok == "1"},
 	})
 }

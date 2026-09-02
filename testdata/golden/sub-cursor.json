@@ -1,0 +1,32 @@
+{
+  "usage": {
+    "autoBucketModels": ["default", "composer-2.5"],
+    "autoModelSelectedDisplayMessage": "You've used 27% of your included total usage",
+    "billingCycleEnd": "1789582434000",
+    "billingCycleStart": "1786904034000",
+    "displayMessage": "You've hit your usage limit",
+    "displayThreshold": 200,
+    "enabled": true,
+    "namedModelSelectedDisplayMessage": "You've used 63% of your included API usage",
+    "planUsage": {
+      "apiPercentUsed": 62.94,
+      "autoPercentUsed": 20.458,
+      "bonusSpend": 52844,
+      "includedSpend": 40000,
+      "limit": 40000,
+      "remainingBonus": false,
+      "totalPercentUsed": 26.52685714285714,
+      "totalSpend": 92844
+    },
+    "spendLimitUsage": { "limitType": "user" }
+  },
+  "plan": {
+    "planInfo": {
+      "billingCycleEnd": "1789582434000",
+      "includedAmountCents": 40000,
+      "planName": "Ultra",
+      "planOwner": "PLAN_OWNER_STRIPE",
+      "price": "$200/mo"
+    }
+  }
+}

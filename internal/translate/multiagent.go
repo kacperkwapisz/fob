@@ -93,10 +93,8 @@ func sameSlice(a []any, b any) bool {
 	if !ok || len(a) != len(bb) {
 		return false
 	}
-	for i := range a {
-		if a[i] != bb[i] {
-			return false
-		}
+	if len(a) == 0 {
+		return true
 	}
-	return true
+	return &a[0] == &bb[0]
 }

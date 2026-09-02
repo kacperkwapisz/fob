@@ -2,7 +2,6 @@ package store
 
 import (
 	"testing"
-	"time"
 
 	"github.com/kacperkwapisz/fob/internal/db"
 	"github.com/kacperkwapisz/fob/internal/domain"
@@ -45,49 +44,44 @@ func TestUsageAndPrices(t *testing.T) {
 	}
 }
 
-func TestUsageDailyFillsEmptyDays(t *testing.T) {
+func TestUsageDailyFillsGaps(t *testing.T) {
 	d, err := db.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer d.Close()
 	usage := NewUsageStore(d)
-	now := time.UnixMilli(nowMs()).Local()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	noon := func(daysAgo int) int64 {
-		return today.AddDate(0, 0, -daysAgo).Add(12 * time.Hour).UnixMilli()
+	threeDaysAgo := nowMs() - 3*24*60*60*1000
+	if err := usage.Record(domain.UsageEvent{
+		TS:       threeDaysAgo,
+		Provider: domain.ProviderClaude,
+		Model:    "claude-opus-4-7",
+		Inbound:  domain.InboundOpenAIChat,
+		Status:   "ok",
+		USD:      1.25,
+	}); err != nil {
+		t.Fatal(err)
 	}
-	for _, ev := range []domain.UsageEvent{
-		{TS: noon(20), Provider: domain.ProviderClaude, Model: "old", Inbound: domain.InboundOpenAIChat, PromptTokens: 99, Status: "ok"},
-		{TS: noon(3), Provider: domain.ProviderClaude, Model: "mid", Inbound: domain.InboundOpenAIChat, PromptTokens: 5, CompletionTokens: 1, Status: "ok"},
-		{TS: now.UnixMilli(), Provider: domain.ProviderCodex, Model: "new", Inbound: domain.InboundOpenAIChat, PromptTokens: 10, CompletionTokens: 2, Status: "ok"},
-	} {
-		if err := usage.Record(ev); err != nil {
-			t.Fatal(err)
-		}
-	}
-	days, err := usage.Daily(14)
+	points, err := usage.Daily(7)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(days) != 14 {
-		t.Fatalf("len %d", len(days))
+	if len(points) != 7 {
+		t.Fatalf("len %d", len(points))
 	}
-	if days[13].Start != today.UnixMilli() {
-		t.Fatalf("today start %d want %d", days[13].Start, today.UnixMilli())
+	var hits int
+	var sum float64
+	for _, p := range points {
+		if p.Day == "" {
+			t.Fatal("empty day")
+		}
+		if p.USD > 0 {
+			hits++
+			sum += p.USD
+		}
 	}
-	if days[13].PromptTokens != 10 || days[13].CompletionTokens != 2 || days[13].Requests != 1 {
-		t.Fatalf("today %+v", days[13])
-	}
-	if days[10].PromptTokens != 5 || days[10].CompletionTokens != 1 {
-		t.Fatalf("3d ago %+v", days[10])
-	}
-	var prompt int64
-	for _, day := range days {
-		prompt += day.PromptTokens
-	}
-	if prompt != 15 {
-		t.Fatalf("window prompt %d", prompt)
+	if hits != 1 || sum != 1.25 {
+		t.Fatalf("hits %d sum %v points %+v", hits, sum, points)
 	}
 }
 

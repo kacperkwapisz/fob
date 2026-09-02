@@ -2,11 +2,11 @@ package panel
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/kacperkwapisz/fob/internal/domain"
 	"github.com/kacperkwapisz/fob/internal/store"
@@ -16,15 +16,16 @@ type DashboardProps struct {
 	Credentials []domain.Credential
 	Keys        []domain.LocalKey
 	Usage       UsageProps
+	SubCount    int
 	Settings    SettingsProps
 }
 
 type UsageProps struct {
-	Today      store.UsageTotals
-	D7         store.UsageTotals
-	ByProvider []store.UsageBreakdown
-	ByModel    []store.UsageBreakdown
-	Trends     []store.UsageDay
+	Today      store.UsageTotals      `json:"today"`
+	D7         store.UsageTotals      `json:"d7"`
+	ByProvider []store.UsageBreakdown `json:"byProvider"`
+	ByModel    []store.UsageBreakdown `json:"byModel"`
+	Daily      []store.UsagePoint     `json:"daily"`
 }
 
 type SettingsProps struct {
@@ -36,31 +37,49 @@ func Layout(title, meta, body string) string {
 	if meta == "" {
 		meta = "local proxy"
 	}
-	return fmt.Sprintf(`<!doctype html>
+	return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>%s</title>
+    <title>` + esc(title) + `</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/design.css" />
-    <script src="/panel.js" defer></script>
+    <link rel="stylesheet" href="/design.css?v=0.6.2" />
+    <script>document.documentElement.classList.add("js")</script>
+    <script src="/alpine.min.js" defer></script>
+    <script src="/panel.js?v=0.6.2" defer></script>
   </head>
   <body>
+    <a class="skip" href="#main">Skip to content</a>
     <div class="shell">
       <header class="mast">
-        <div class="wordmark">Fob<span>.</span></div>
-        <div class="mast-meta">%s</div>
+        <div class="wordmark"><span class="led" aria-hidden="true"></span>Fob</div>
+        <button type="button" class="endpoint" data-copy-text="` + attr(meta) + `" title="Copy endpoint">` + esc(meta) + `</button>
+        <form class="mast-lock" method="post" action="/logout">
+          <button class="btn btn-ghost" type="submit">Lock</button>
+        </form>
       </header>
-      %s
+      <main id="main">
+      ` + body + `
+      </main>
     </div>
+    <dialog id="confirm-dialog" class="dialog">
+      <form method="dialog" class="stack">
+        <h3>Confirm</h3>
+        <p class="lede" id="confirm-body"></p>
+        <div class="actions">
+          <button class="btn" value="cancel">Cancel</button>
+          <button class="btn btn-danger" value="ok" id="confirm-ok">Continue</button>
+        </div>
+      </form>
+    </dialog>
   </body>
-</html>`, esc(title), esc(meta), body)
+</html>`
 }
 
 func LoginView(err string) string {
@@ -96,7 +115,7 @@ func DeviceView(provider, url, userCode, deviceCode, err string) string {
 	}
 	var b strings.Builder
 	if userCode != "" {
-		fmt.Fprintf(&b, `<p class="metric">%s<small>user code</small></p>`, esc(userCode))
+		fmt.Fprintf(&b, `<p class="metric user-code">%s<small>user code</small></p>`, esc(userCode))
 	}
 	if url != "" {
 		fmt.Fprintf(&b, `<p><a href="%s" target="_blank" rel="noreferrer">Open %s</a></p>`, attr(url), esc(provider))
@@ -142,9 +161,6 @@ func PasteCallbackViewNote(provider, url, hint, note string, danger bool) string
 
 func SecretView(provider, url, err string) string {
 	var b strings.Builder
-	if err != "" {
-		b.WriteString(flash("danger", err))
-	}
 	if url != "" {
 		fmt.Fprintf(&b, `<p><a href="%s" target="_blank" rel="noreferrer">Open Cursor Integrations</a></p>`, attr(url))
 	}
@@ -161,25 +177,24 @@ func SecretView(provider, url, err string) string {
 func Dashboard(props DashboardProps) string {
 	var b strings.Builder
 	b.WriteString(`
-    <div class="flash" id="minted" hidden>
-      <strong>New local key</strong>
-      <p>Copy it now. Fob will not show it again.</p>
-      <p class="secret"></p>
-      <div class="actions">
-        <button class="btn" type="button" data-copy>Copy</button>
-        <button class="btn" type="button" data-dismiss>Done</button>
+    <div class="dialog-layer" id="minted" hidden x-data="{ copied: false }" @fob-minted.window="$el.hidden = false; copied = false">
+      <div class="card dialog-card" role="status">
+        <h2>New local key</h2>
+        <p class="lede">Copy it now. Fob will not show it again.</p>
+        <p class="secret"></p>
+        <div class="actions">
+          <button class="btn btn-primary" type="button" data-copy x-text="copied ? 'Copied' : 'Copy'" @click="copied = true">Copy</button>
+          <button class="btn" type="button" data-dismiss>Done</button>
+        </div>
       </div>
     </div>
     <div class="deck">`)
+	b.WriteString(meterCard(props.Usage))
 	b.WriteString(loginsCard(props))
 	b.WriteString(keysCard(props.Keys))
-	b.WriteString(meterCard(props.Usage))
-	b.WriteString(usageTrendsCard(props.Usage))
+	b.WriteString(subCard(props.SubCount))
 	b.WriteString(cursorSettingsCard(props.Settings))
-	b.WriteString(`</div>
-    <form method="post" action="/logout" style="margin-top:2rem">
-      <button class="btn" type="submit">Lock panel</button>
-    </form>`)
+	b.WriteString(`</div>`)
 	return b.String()
 }
 
@@ -198,18 +213,24 @@ func loginsCard(props DashboardProps) string {
 		{domain.ProviderCursor, "Cursor"},
 	}
 	var b strings.Builder
-	b.WriteString(`<section class="card"><h2>Logins</h2><p class="lede">OAuth into the subscriptions you already pay for. After Claude or Codex, paste the failed localhost URL back here.</p>`)
+	b.WriteString(`<section class="card card-logins"><div class="card-head"><h2>Logins</h2><p class="lede">OAuth into the subscriptions you already pay for. After Claude or Codex, paste the failed localhost URL back here.</p></div><ul class="provider-list">`)
 	for _, p := range providers {
 		creds := byProvider[p.id]
-		b.WriteString(`<div class="row"><div><strong>`)
+		pip := "pip"
+		if len(creds) > 0 {
+			pip = "pip pip-ok"
+		}
+		b.WriteString(`<li class="provider"><span class="` + pip + `" aria-hidden="true"></span><div class="provider-meta"><strong>`)
 		b.WriteString(esc(p.label))
-		b.WriteString(`</strong><div class="lede" style="margin:0">`)
+		b.WriteString(`</strong><div class="lede">`)
 		if len(creds) == 0 {
 			b.WriteString("Not connected")
 		} else {
-			for _, c := range creds {
+			for i, c := range creds {
+				if i > 0 {
+					b.WriteString(" · ")
+				}
 				b.WriteString(esc(c.Label))
-				b.WriteString(" ")
 			}
 		}
 		b.WriteString(`</div></div><div class="actions">`)
@@ -224,9 +245,9 @@ func loginsCard(props DashboardProps) string {
 		if p.id == domain.ProviderCursor {
 			b.WriteString(`<form method="post" action="/login/cursor?mode=secret"><button class="btn" type="submit">Paste key</button></form>`)
 		}
-		b.WriteString(`</div></div>`)
+		b.WriteString(`</div></li>`)
 	}
-	b.WriteString(`</section>`)
+	b.WriteString(`</ul></section>`)
 	return b.String()
 }
 
@@ -238,7 +259,7 @@ func keysCard(keys []domain.LocalKey) string {
 		}
 	}
 	var b strings.Builder
-	b.WriteString(`<section class="card"><h2>Keys</h2><p class="lede">Hand a <code>sk-fob-…</code> to Cursor, Claude Code, OpenCode.</p>`)
+	b.WriteString(`<section class="card card-keys"><div class="card-head"><h2>Keys</h2><p class="lede">Hand a <code>sk-fob-…</code> to Cursor, Claude Code, OpenCode.</p></div>`)
 	if len(live) == 0 {
 		b.WriteString(`<p class="empty">No keys yet. Mint one and paste it into a tool as the OpenAI API key.</p>`)
 	} else {
@@ -252,13 +273,13 @@ func keysCard(keys []domain.LocalKey) string {
 				}
 				scope = strings.Join(parts, " ")
 			}
-			fmt.Fprintf(&b, `<tr><td>%s<br /><span class="pill">%s</span></td><td>%s…</td><td><form method="post" action="/keys/%s/revoke" data-confirm="Revoke %s? Tools using it will 401."><button class="btn btn-danger" type="submit">Revoke</button></form></td></tr>`,
+			fmt.Fprintf(&b, `<tr><td>%s<br /><span class="pill">%s</span></td><td><code class="key-prefix">%s…</code></td><td><form method="post" action="/keys/%s/revoke" data-confirm="Revoke %s? Tools using it will 401."><button class="btn btn-danger" type="submit">Revoke</button></form></td></tr>`,
 				esc(k.Name), esc(scope), esc(k.Prefix), attr(k.ID), attr(k.Name))
 		}
 		b.WriteString(`</tbody></table>`)
 	}
-	b.WriteString(`<form class="stack" id="mint" method="post" action="/keys" style="margin-top:1rem">
-        <label class="field">
+	b.WriteString(`<form class="mint" id="mint" method="post" action="/keys">
+        <label class="field grow">
           <span>Name</span>
           <input type="text" name="name" placeholder="opencode" required />
         </label>
@@ -268,21 +289,42 @@ func keysCard(keys []domain.LocalKey) string {
 }
 
 func meterCard(usage UsageProps) string {
+	if usage.ByProvider == nil {
+		usage.ByProvider = []store.UsageBreakdown{}
+	}
+	if usage.ByModel == nil {
+		usage.ByModel = []store.UsageBreakdown{}
+	}
+	if usage.Daily == nil {
+		usage.Daily = []store.UsagePoint{}
+	}
+	raw, _ := json.Marshal(usage)
 	var b strings.Builder
-	b.WriteString(`<section class="card"><h2>Meter</h2><p class="lede">API-equivalent $. Not your subscription bill.</p><div class="metrics">`)
-	fmt.Fprintf(&b, `<div class="metric">%s<small>today</small></div>`, fmtUSD(usage.Today.USD))
-	fmt.Fprintf(&b, `<div class="metric">%s<small>7 days</small></div>`, fmtUSD(usage.D7.USD))
-	fmt.Fprintf(&b, `<div class="metric">%s<small>tokens today</small></div>`, fmtInt(usage.Today.PromptTokens+usage.Today.CompletionTokens))
-	fmt.Fprintf(&b, `<div class="metric">%s<small>requests today</small></div>`, fmtInt(usage.Today.Requests))
-	b.WriteString(`</div>`)
+	b.WriteString(`<section class="card card-meter"><div class="card-head"><h2>Meter</h2><p class="lede">API-equivalent $. Not your subscription bill.</p></div><div class="kpis">`)
+	fmt.Fprintf(&b, `<div class="kpi kpi-signal"><div class="kpi-value">%s</div><div class="kpi-label">today</div></div>`, fmtUSD(usage.Today.USD))
+	fmt.Fprintf(&b, `<div class="kpi"><div class="kpi-value">%s</div><div class="kpi-label">7 days</div></div>`, fmtUSD(usage.D7.USD))
+	fmt.Fprintf(&b, `<div class="kpi"><div class="kpi-value">%s</div><div class="kpi-label">tokens today</div></div>`, fmtInt(usage.Today.PromptTokens+usage.Today.CompletionTokens))
+	fmt.Fprintf(&b, `<div class="kpi"><div class="kpi-value">%s</div><div class="kpi-label">requests today</div></div>`, fmtInt(usage.Today.Requests))
+	b.WriteString(`</div><div class="charts">
+      <figure class="chart">
+        <figcaption>7-day equivalent $</figcaption>
+        <div class="chart-frame">
+          <canvas id="chart-series" role="img" aria-label="Equivalent dollar spend over the last seven days"></canvas>
+          <div class="chart-tip" id="chart-series-tip" hidden></div>
+        </div>
+      </figure>
+      <figure class="chart">
+        <figcaption>By provider</figcaption>
+        <div class="chart-frame">
+          <canvas id="chart-providers" role="img" aria-label="Equivalent dollar spend by provider"></canvas>
+          <div class="chart-tip" id="chart-providers-tip" hidden></div>
+        </div>
+      </figure>
+    </div>`)
 	if len(usage.ByProvider) == 0 {
 		b.WriteString(`<p class="empty">No traffic yet. Point a tool at <code>/v1</code>.</p>`)
 	} else {
-		b.WriteString(`<table class="table"><thead><tr><th>Provider</th><th>$</th></tr></thead><tbody>`)
-		for _, r := range usage.ByProvider {
-			fmt.Fprintf(&b, `<tr><td>%s</td><td>%s</td></tr>`, esc(r.Key), fmtUSD(r.USD))
-		}
-		b.WriteString(`</tbody></table><table class="table" style="margin-top:1rem"><thead><tr><th>Model</th><th>$</th></tr></thead><tbody>`)
+		b.WriteString(`<table class="table models"><thead><tr><th>Model</th><th>$</th></tr></thead><tbody>`)
 		limit := len(usage.ByModel)
 		if limit > 8 {
 			limit = 8
@@ -292,74 +334,24 @@ func meterCard(usage UsageProps) string {
 		}
 		b.WriteString(`</tbody></table>`)
 	}
-	b.WriteString(`</section>`)
+	b.WriteString(`<script type="application/json" id="meter-data">`)
+	b.Write(raw)
+	b.WriteString(`</script></section>`)
 	return b.String()
 }
 
-func usageTrendsCard(usage UsageProps) string {
+func subCard(n int) string {
 	var b strings.Builder
-	b.WriteString(`<section class="card card-wide"><h2>Usage Trends</h2>`)
-	if !trendHasTraffic(usage.Trends) {
-		b.WriteString(`<p class="lede">Tokens per day. Last 14 days.</p><p class="empty">No traffic yet. Point a tool at <code>/v1</code>.</p></section>`)
+	b.WriteString(`<section class="card card-sub" id="sub"><div class="card-head"><h2>Sub</h2><p class="lede">Remaining on the subscription. Not the meter.</p></div>`)
+	if n == 0 {
+		b.WriteString(`<p class="empty">Connect a login, then load.</p></section>`)
 		return b.String()
 	}
-	from := time.UnixMilli(usage.Trends[0].Start).In(time.Local)
-	to := time.UnixMilli(usage.Trends[len(usage.Trends)-1].Start).In(time.Local)
-	fmt.Fprintf(&b, `<p class="lede">Tokens per day. %s – %s.</p>`, esc(from.Format("2 Jan")), esc(to.Format("2 Jan")))
-	var window store.UsageTotals
-	var peak int64
-	for _, day := range usage.Trends {
-		window.PromptTokens += day.PromptTokens
-		window.CompletionTokens += day.CompletionTokens
-		tokens := day.PromptTokens + day.CompletionTokens
-		if tokens > peak {
-			peak = tokens
-		}
-	}
-	b.WriteString(`<div class="metrics">`)
-	fmt.Fprintf(&b, `<div class="metric">%s<small>%d days</small></div>`, fmtInt(window.PromptTokens+window.CompletionTokens), len(usage.Trends))
-	fmt.Fprintf(&b, `<div class="metric">%s<small>peak day</small></div>`, fmtInt(peak))
-	fmt.Fprintf(&b, `<div class="metric">%s<small>prompt</small></div>`, fmtInt(window.PromptTokens))
-	fmt.Fprintf(&b, `<div class="metric">%s<small>completion</small></div>`, fmtInt(window.CompletionTokens))
-	b.WriteString(`</div>`)
-	fmt.Fprintf(&b, `<div class="trend" style="grid-template-columns:repeat(%d,minmax(0,1fr))" role="img" aria-label="Token usage over %d days, %s total">`,
-		len(usage.Trends), len(usage.Trends), fmtInt(window.PromptTokens+window.CompletionTokens))
-	for i, day := range usage.Trends {
-		tokens := day.PromptTokens + day.CompletionTokens
-		height := 0.0
-		if peak > 0 {
-			height = float64(tokens) / float64(peak) * 100
-		}
-		if tokens > 0 && height < 3 {
-			height = 3
-		}
-		when := time.UnixMilli(day.Start).In(time.Local)
-		label := when.Format("2")
-		if i == 0 || i == len(usage.Trends)-1 || when.Day() == 1 {
-			label = when.Format("2 Jan")
-		}
-		title := fmt.Sprintf("%s · %s prompt · %s completion",
-			when.Format("2 Jan"), fmtInt(day.PromptTokens), fmtInt(day.CompletionTokens))
-		fmt.Fprintf(&b, `<div class="trend-col" title="%s"><div class="trend-track">`, attr(title))
-		if tokens > 0 {
-			fmt.Fprintf(&b, `<div class="trend-stack" style="height:%.1f%%">`, height)
-			fmt.Fprintf(&b, `<div class="trend-prompt" style="flex:%d"></div>`, day.PromptTokens)
-			fmt.Fprintf(&b, `<div class="trend-completion" style="flex:%d"></div>`, day.CompletionTokens)
-			b.WriteString(`</div>`)
-		}
-		fmt.Fprintf(&b, `</div><span class="trend-day">%s</span></div>`, esc(label))
-	}
-	b.WriteString(`</div><p class="trend-legend"><span><span class="swatch swatch-prompt"></span>prompt</span><span><span class="swatch swatch-completion"></span>completion</span></p></section>`)
+	b.WriteString(`<div id="sub-body"><p class="empty">Idle until you load.</p></div>
+      <div class="actions" style="margin-top:1rem">
+        <button class="btn btn-primary" type="button" id="sub-load">Load</button>
+      </div></section>`)
 	return b.String()
-}
-
-func trendHasTraffic(days []store.UsageDay) bool {
-	for _, day := range days {
-		if day.Requests > 0 {
-			return true
-		}
-	}
-	return false
 }
 
 func cursorSettingsCard(settings SettingsProps) string {
@@ -371,19 +363,27 @@ func cursorSettingsCard(settings SettingsProps) string {
 	if settings.GrokFailover {
 		grok = "checked"
 	}
-	return fmt.Sprintf(`<section class="card">
-      <h2>Cursor</h2>
-      <p class="lede">Prefix listed Cursor models with <code>cursor/</code>. Grok failover maps <code>grok-4.5</code> onto Cursor Grok when the Grok sub is exhausted.</p>
-      <form method="post" action="/settings/cursor" class="stack">
-        <label class="field" style="flex-direction:row;gap:.6rem;align-items:center">
-          <input type="checkbox" name="prefix" value="1" %s />
-          <span>Prefix Cursor models</span>
+	return fmt.Sprintf(`<section class="card card-settings">
+      <div class="card-head">
+        <h2>Cursor</h2>
+        <p class="lede">Prefix listed Cursor models with <code>cursor/</code> (effort/fast variants already collapse). Grok failover maps <code>grok-4.5</code> onto Cursor Grok when the Grok sub is exhausted.</p>
+      </div>
+      <form method="post" action="/settings/cursor" class="stack" data-autosave>
+        <label class="switch-row">
+          <span>
+            <strong>Prefix Cursor models</strong>
+            <span class="lede">List them as <code>cursor/…</code></span>
+          </span>
+          <input class="switch" type="checkbox" name="prefix" value="1" %s />
         </label>
-        <label class="field" style="flex-direction:row;gap:.6rem;align-items:center">
-          <input type="checkbox" name="grok_failover" value="1" %s />
-          <span>Grok ↔ Cursor failover</span>
+        <label class="switch-row">
+          <span>
+            <strong>Grok ↔ Cursor failover</strong>
+            <span class="lede">Fall over when the Grok sub is exhausted</span>
+          </span>
+          <input class="switch" type="checkbox" name="grok_failover" value="1" %s />
         </label>
-        <button class="btn" type="submit">Save</button>
+        <button class="btn js-hide" type="submit">Save</button>
       </form>
     </section>`, prefix, grok)
 }
@@ -407,6 +407,8 @@ func flash(kind, message string) string {
 	cls := "flash"
 	if kind == "danger" {
 		cls = "flash flash-danger"
+	} else if kind == "ok" {
+		cls = "flash flash-ok"
 	}
 	return fmt.Sprintf(`<div class="%s" role="status">%s</div>`, cls, esc(message))
 }
@@ -422,7 +424,7 @@ func attr(s string) string {
 }
 
 func fmtUSD(n float64) string {
-	return "$" + strconv.FormatFloat(n, 'f', -1, 64)
+	return "$" + strconv.FormatFloat(n, 'f', 2, 64)
 }
 
 func fmtInt(n int64) string {

@@ -7,28 +7,25 @@ import (
 	"github.com/kacperkwapisz/fob/internal/domain"
 )
 
-const (
-	dayMS    = 24 * 60 * 60 * 1000
-	retainMS = 90 * dayMS
-)
+const retainMS = 90 * 24 * 60 * 60 * 1000
 
 type UsageTotals struct {
-	Requests         int64
-	PromptTokens     int64
-	CompletionTokens int64
-	CacheReadTokens  int64
-	CacheWriteTokens int64
-	USD              float64
-	Errors           int64
+	Requests         int64   `json:"requests"`
+	PromptTokens     int64   `json:"promptTokens"`
+	CompletionTokens int64   `json:"completionTokens"`
+	CacheReadTokens  int64   `json:"cacheReadTokens"`
+	CacheWriteTokens int64   `json:"cacheWriteTokens"`
+	USD              float64 `json:"usd"`
+	Errors           int64   `json:"errors"`
 }
 
 type UsageBreakdown struct {
-	Key string
+	Key string `json:"key"`
 	UsageTotals
 }
 
-type UsageDay struct {
-	Start int64
+type UsagePoint struct {
+	Day string `json:"day"`
 	UsageTotals
 }
 
@@ -109,18 +106,15 @@ func (s *UsageStore) GroupBy(msAgo int64, field string) ([]UsageBreakdown, error
 	return out, rows.Err()
 }
 
-func (s *UsageStore) Daily(days int) ([]UsageDay, error) {
+func (s *UsageStore) Daily(days int) ([]UsagePoint, error) {
 	if days < 1 {
-		days = 1
+		days = 7
 	}
-	if days > 90 {
-		days = 90
-	}
-	now := time.UnixMilli(nowMs()).Local()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	from := today.AddDate(0, 0, -(days - 1))
+	now := time.Now().UTC()
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -(days - 1))
+	from := start.UnixMilli()
 	rows, err := s.db.SQL.Query(
-		`SELECT strftime('%Y-%m-%d', ts / 1000, 'unixepoch', 'localtime') AS day,
+		`SELECT strftime('%Y-%m-%d', ts/1000, 'unixepoch') AS day,
 		        COUNT(*) AS requests,
 		        COALESCE(SUM(prompt_tokens),0) AS prompt,
 		        COALESCE(SUM(completion_tokens),0) AS completion,
@@ -129,28 +123,27 @@ func (s *UsageStore) Daily(days int) ([]UsageDay, error) {
 		        COALESCE(SUM(usd),0) AS usd,
 		        COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END),0) AS errors
 		 FROM usage_events WHERE ts >= ?
-		 GROUP BY day
-		 ORDER BY day`, from.UnixMilli())
+		 GROUP BY day`, from)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	byDay := map[string]UsageTotals{}
 	for rows.Next() {
-		var key string
+		var day string
 		var t UsageTotals
-		if err := rows.Scan(&key, &t.Requests, &t.PromptTokens, &t.CompletionTokens, &t.CacheReadTokens, &t.CacheWriteTokens, &t.USD, &t.Errors); err != nil {
+		if err := rows.Scan(&day, &t.Requests, &t.PromptTokens, &t.CompletionTokens, &t.CacheReadTokens, &t.CacheWriteTokens, &t.USD, &t.Errors); err != nil {
 			return nil, err
 		}
-		byDay[key] = t
+		byDay[day] = t
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	out := make([]UsageDay, days)
+	out := make([]UsagePoint, 0, days)
 	for i := 0; i < days; i++ {
-		d := from.AddDate(0, 0, i)
-		out[i] = UsageDay{Start: d.UnixMilli(), UsageTotals: byDay[d.Format("2006-01-02")]}
+		day := start.AddDate(0, 0, i).Format("2006-01-02")
+		out = append(out, UsagePoint{Day: day, UsageTotals: byDay[day]})
 	}
 	return out, nil
 }

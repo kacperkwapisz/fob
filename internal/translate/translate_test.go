@@ -2,6 +2,7 @@ package translate
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -131,6 +132,55 @@ func TestGrokStreamToOpenAIChat(t *testing.T) {
 	if !contains(done, "data: [DONE]") {
 		t.Fatalf("%v", done)
 	}
+	if state.PromptTokens != 3 || state.CompletionTokens != 2 {
+		t.Fatalf("usage state %+v", state)
+	}
+}
+
+func TestGrokStreamToClaudeCapturesUsage(t *testing.T) {
+	state := EmptyStreamState()
+	TranslateStream(domain.InboundClaudeMessages, domain.FormatGrok, "grok-4.6", map[string]any{}, map[string]any{
+		"type": "response.created", "response": map[string]any{"id": "resp_1"},
+	}, &state)
+	TranslateStream(domain.InboundClaudeMessages, domain.FormatGrok, "grok-4.6", map[string]any{}, map[string]any{
+		"type": "response.output_text.delta", "delta": "Hey",
+	}, &state)
+	TranslateStream(domain.InboundClaudeMessages, domain.FormatGrok, "grok-4.6", map[string]any{}, map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id": "resp_1", "output": []any{},
+			"usage": map[string]any{"input_tokens": 283.0, "output_tokens": 846.0},
+		},
+	}, &state)
+	if !state.Finished {
+		t.Fatal("expected finished")
+	}
+	if state.PromptTokens != 283 || state.CompletionTokens != 846 {
+		t.Fatalf("usage state prompt=%d completion=%d", state.PromptTokens, state.CompletionTokens)
+	}
+}
+
+func TestGrokStreamToResponsesCapturesUsage(t *testing.T) {
+	state := EmptyStreamState()
+	TranslateStream(domain.InboundOpenAIResponses, domain.FormatGrok, "grok-4.6", map[string]any{}, map[string]any{
+		"type": "response.created", "response": map[string]any{"id": "resp_1"},
+	}, &state)
+	TranslateStream(domain.InboundOpenAIResponses, domain.FormatGrok, "grok-4.6", map[string]any{}, map[string]any{
+		"type": "response.output_text.delta", "delta": "Hey",
+	}, &state)
+	TranslateStream(domain.InboundOpenAIResponses, domain.FormatGrok, "grok-4.6", map[string]any{}, map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id": "resp_1", "output": []any{},
+			"usage": map[string]any{"input_tokens": 283.0, "output_tokens": 846.0},
+		},
+	}, &state)
+	if !state.Finished {
+		t.Fatal("expected finished")
+	}
+	if state.PromptTokens != 283 || state.CompletionTokens != 846 {
+		t.Fatalf("usage state prompt=%d completion=%d", state.PromptTokens, state.CompletionTokens)
+	}
 }
 
 func TestClaudeStreamToOpenAI(t *testing.T) {
@@ -225,6 +275,76 @@ func TestTranslateGoldenChatToClaude(t *testing.T) {
 	want, _ := json.Marshal(g["chatToClaude"])
 	if string(got) != string(want) {
 		t.Fatalf("got %s\nwant %s", got, want)
+	}
+}
+
+func TestFlattenCodexMultiAgentLeavesPlainTools(t *testing.T) {
+	body := map[string]any{
+		"input": []any{
+			map[string]any{
+				"type": "message", "role": "user",
+				"content": []any{map[string]any{"type": "input_text", "text": "hi"}},
+			},
+		},
+		"tools": []any{
+			map[string]any{
+				"type": "function", "name": "lookup",
+				"parameters": map[string]any{"type": "object"},
+			},
+		},
+	}
+	defer func() {
+		if rec := recover(); rec != nil {
+			t.Fatalf("panic: %v", rec)
+		}
+	}()
+	out := FlattenCodexMultiAgent(body)
+	if fmt.Sprintf("%p", out) != fmt.Sprintf("%p", body) {
+		t.Fatalf("expected original body, got %+v", out)
+	}
+}
+
+func TestFlattenCodexMultiAgentRewritesAgentMessage(t *testing.T) {
+	out := AsMap(FlattenCodexMultiAgent(map[string]any{
+		"input": []any{
+			map[string]any{
+				"type":    "agent_message",
+				"content": []any{map[string]any{"type": "encrypted_content", "encrypted_content": "hello"}},
+			},
+		},
+	}))
+	item := AsMap(AsArr(out["input"])[0])
+	if AsStr(item["type"]) != "message" || AsStr(item["role"]) != "user" {
+		t.Fatalf("%+v", item)
+	}
+	part := AsMap(AsArr(item["content"])[0])
+	if AsStr(part["type"]) != "input_text" || AsStr(part["text"]) != "hello" {
+		t.Fatalf("%+v", part)
+	}
+}
+
+func TestFlattenCodexMultiAgentStripsCollabEncryption(t *testing.T) {
+	out := AsMap(FlattenCodexMultiAgent(map[string]any{
+		"input": []any{
+			map[string]any{"type": "message", "role": "user", "content": "hi"},
+		},
+		"tools": []any{
+			map[string]any{
+				"name": "spawn_agent",
+				"parameters": map[string]any{
+					"properties": map[string]any{
+						"message": map[string]any{"type": "string", "encrypted": true},
+					},
+				},
+			},
+		},
+	}))
+	msg := AsMap(AsMap(AsMap(AsMap(AsArr(out["tools"])[0])["parameters"])["properties"])["message"])
+	if _, ok := msg["encrypted"]; ok {
+		t.Fatalf("encrypted still present: %+v", msg)
+	}
+	if AsStr(msg["type"]) != "string" {
+		t.Fatalf("%+v", msg)
 	}
 }
 

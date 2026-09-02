@@ -424,11 +424,9 @@ func codexStreamToOpenaiChat(model string, _ any, chunk any, state *StreamState)
 		if AsStr(AsMap(ev["item"])["type"]) == "function_call" {
 			state.ToolIndex++
 		}
-	case "response.completed":
+	case "response.completed", "response.done":
 		resp := AsMap(ev["response"])
-		u := mapResponsesUsage(resp["usage"])
-		state.PromptTokens = int64(numOf(u["prompt_tokens"]))
-		state.CompletionTokens = int64(numOf(u["completion_tokens"]))
+		captureResponsesUsage(state, resp["usage"])
 		hasTools := false
 		for _, i := range AsArr(resp["output"]) {
 			if AsStr(AsMap(i)["type"]) == "function_call" {
@@ -558,6 +556,19 @@ func mapResponsesUsage(usage any) map[string]any {
 		out["prompt_tokens_details"] = map[string]any{"cached_tokens": cacheRead}
 	}
 	return out
+}
+
+func captureResponsesUsage(state *StreamState, usage any) {
+	if state == nil {
+		return
+	}
+	u := mapResponsesUsage(usage)
+	state.PromptTokens = int64(numOf(u["prompt_tokens"]))
+	state.CompletionTokens = int64(numOf(u["completion_tokens"]))
+	details := AsMap(u["prompt_tokens_details"])
+	if n, ok := AsNum(details["cached_tokens"]); ok {
+		state.CacheRead = int64(n)
+	}
 }
 
 func effortToBudget(effort string) int {

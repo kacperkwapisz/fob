@@ -1,0 +1,11 @@
+{
+  "usage": {
+    "five_hour": { "utilization": 42.5, "resets_at": "2026-08-31T20:00:00Z" },
+    "seven_day": { "utilization": 18, "resets_at": "2026-09-06T12:00:00Z" },
+    "extra_usage": { "is_enabled": true, "used_credits": 1234, "monthly_limit": 5000 }
+  },
+  "profile": {
+    "account": { "has_claude_max": true, "has_claude_pro": false },
+    "organization": { "organization_type": "claude_pro", "subscription_status": "active" }
+  }
+}
