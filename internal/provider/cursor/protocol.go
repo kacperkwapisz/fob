@@ -623,8 +623,25 @@ func resumeTools(ctx context.Context, active *activeBridge, parsed ParsedMessage
 	var parser frameParser
 	done := make(chan struct{})
 	var once sync.Once
-	finish := func() { once.Do(func() { close(done) }) }
+	var emitMu sync.Mutex
+	finish := func() {
+		once.Do(func() {
+			close(done)
+			emitMu.Lock()
+			if stream {
+				close(out)
+			}
+			emitMu.Unlock()
+		})
+	}
 	emit := func(delta map[string]any, finishReason any) {
+		emitMu.Lock()
+		defer emitMu.Unlock()
+		select {
+		case <-done:
+			return
+		default:
+		}
 		chunk := map[string]any{
 			"id": completionID, "object": "chat.completion.chunk", "created": created, "model": modelID,
 			"choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": finishReason}},
@@ -695,9 +712,6 @@ func resumeTools(ctx context.Context, active *activeBridge, parsed ParsedMessage
 			cleanupActive(active)
 			finish()
 		case <-done:
-		}
-		if stream {
-			close(out)
 		}
 	}()
 	if stream {

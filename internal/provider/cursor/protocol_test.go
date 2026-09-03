@@ -3,6 +3,7 @@ package cursor
 import (
 	"context"
 	"testing"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -423,4 +424,94 @@ func TestMcpPauseAndResume(t *testing.T) {
 	if !foundResult {
 		t.Fatalf("no mcp result in %+v", clientMsgs)
 	}
+}
+
+func TestResumeToolsLateProtocolErrorDoesNotPanic(t *testing.T) {
+	t.Setenv("CURSOR_AGENT_URL", "https://agentn.test.cursor.sh")
+	var onData func([]byte)
+	var onClose func(int)
+	mcpResult := make(chan struct{})
+	SetBridgeFactoryForTests(func(_, _, _ string, _ bool, _ ClientKind) *Bridge {
+		alive := true
+		return &Bridge{
+			Write: func(frame []byte) {
+				if len(frame) < 5 {
+					return
+				}
+				var msg agentpb.AgentClientMessage
+				if proto.Unmarshal(frame[5:], &msg) != nil {
+					return
+				}
+				if msg.GetRunRequest() != nil && onData != nil {
+					go func() {
+						onData(frameConnect(mustMarshal(&agentpb.AgentServerMessage{
+							Message: &agentpb.AgentServerMessage_ExecServerMessage{
+								ExecServerMessage: &agentpb.ExecServerMessage{
+									Id: 3, ExecId: "e1",
+									Message: &agentpb.ExecServerMessage_McpArgs{McpArgs: &agentpb.McpArgs{
+										Name: "ls", ToolName: "ls", ToolCallId: "c1",
+									}},
+								},
+							},
+						}), 0))
+					}()
+				}
+				if msg.GetExecClientMessage() != nil && msg.GetExecClientMessage().GetMcpResult() != nil {
+					select {
+					case <-mcpResult:
+					default:
+						close(mcpResult)
+					}
+				}
+			},
+			End:     func() { alive = false },
+			OnData:  func(cb func([]byte)) { onData = cb },
+			OnClose: func(cb func(int)) { onClose = cb },
+			Alive:   func() bool { return alive },
+		}
+	})
+	defer SetBridgeFactoryForTests(nil)
+	defer CleanupAllSessionState()
+
+	result, err := RunChat(context.Background(), "tok", map[string]any{
+		"model":    "composer-2.5",
+		"messages": []any{map[string]any{"role": "user", "content": "list files"}},
+		"tools":    []any{map[string]any{"type": "function", "function": map[string]any{"name": "ls", "parameters": map[string]any{"type": "object"}}}},
+		"stream":   true,
+	}, true, ClientCLI)
+	if err != nil || result.Stream == nil {
+		t.Fatalf("%+v %v", result, err)
+	}
+	for range result.Stream {
+	}
+
+	result, err = RunChat(context.Background(), "tok", map[string]any{
+		"model": "composer-2.5",
+		"messages": []any{
+			map[string]any{"role": "user", "content": "list files"},
+			map[string]any{"role": "assistant", "content": nil, "tool_calls": []any{map[string]any{"id": "c1", "type": "function", "function": map[string]any{"name": "ls", "arguments": "{}"}}}},
+			map[string]any{"role": "tool", "tool_call_id": "c1", "content": "a.ts"},
+		},
+		"stream": true,
+	}, true, ClientCLI)
+	if err != nil || result.Stream == nil {
+		t.Fatalf("%+v %v", result, err)
+	}
+
+	select {
+	case <-mcpResult:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for mcp result")
+	}
+	if onClose == nil || onData == nil {
+		t.Fatal("missing resume callbacks")
+	}
+	onClose(0)
+	for range result.Stream {
+	}
+	onData(frameConnect(mustMarshal(&agentpb.AgentServerMessage{
+		Message: &agentpb.AgentServerMessage_InteractionQuery{
+			InteractionQuery: &agentpb.InteractionQuery{Id: 1},
+		},
+	}), 0))
 }
