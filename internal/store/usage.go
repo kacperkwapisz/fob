@@ -110,9 +110,13 @@ func (s *UsageStore) Daily(days int) ([]UsagePoint, error) {
 	if days < 1 {
 		days = 7
 	}
+	if days > 90 {
+		days = 90
+	}
 	now := time.Now().UTC()
-	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -(days - 1))
-	from := start.UnixMilli()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	start := today.AddDate(0, 0, -(days - 1))
+	until := today.AddDate(0, 0, 1)
 	rows, err := s.db.SQL.Query(
 		`SELECT strftime('%Y-%m-%d', ts/1000, 'unixepoch') AS day,
 		        COUNT(*) AS requests,
@@ -122,8 +126,8 @@ func (s *UsageStore) Daily(days int) ([]UsagePoint, error) {
 		        COALESCE(SUM(cache_write_tokens),0) AS cache_write,
 		        COALESCE(SUM(usd),0) AS usd,
 		        COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END),0) AS errors
-		 FROM usage_events WHERE ts >= ?
-		 GROUP BY day`, from)
+		 FROM usage_events WHERE ts >= ? AND ts < ?
+		 GROUP BY day`, start.UnixMilli(), until.UnixMilli())
 	if err != nil {
 		return nil, err
 	}

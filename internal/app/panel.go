@@ -17,7 +17,10 @@ import (
 	"github.com/kacperkwapisz/fob/internal/sub"
 )
 
-const dayMS = 24 * 60 * 60 * 1000
+const (
+	dayMS     = 24 * 60 * 60 * 1000
+	trendDays = 14
+)
 
 func registerPanel(mux *httpx.Mux, fob *proxy.Fob, e *env.Env, panelAuth *store.PanelAuth, settings *store.SettingsStore, logins map[domain.ProviderID]oauth.ProviderLogin) {
 	mux.Handle(http.MethodGet, "/design.css", func(w http.ResponseWriter, _ *http.Request) {
@@ -292,6 +295,7 @@ func dashboard(fob *proxy.Fob, settings *store.SettingsStore) string {
 	byProvider, _ := fob.Usage.GroupBy(7*dayMS, "provider")
 	byModel, _ := fob.Usage.GroupBy(7*dayMS, "model")
 	daily, _ := fob.Usage.Daily(7)
+	trends, _ := fob.Usage.Daily(trendDays)
 	prefix, _ := settings.Get(proxy.SettingCursorPrefix)
 	grok, _ := settings.Get(proxy.SettingCursorGrokFailover)
 	subN := 0
@@ -305,7 +309,7 @@ func dashboard(fob *proxy.Fob, settings *store.SettingsStore) string {
 		Credentials: creds,
 		Keys:        keys,
 		Usage: panel.UsageProps{
-			Today: today, D7: d7, ByProvider: byProvider, ByModel: byModel, Daily: daily,
+			Today: today, D7: d7, ByProvider: byProvider, ByModel: byModel, Daily: daily, Trends: trends,
 		},
 		SubCount: subN,
 		Settings: panel.SettingsProps{CursorPrefix: prefix == "1", GrokFailover: grok == "1"},

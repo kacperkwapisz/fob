@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kacperkwapisz/fob/internal/domain"
 	"github.com/kacperkwapisz/fob/internal/provider"
@@ -152,7 +153,7 @@ func TestMintRedirectsWithoutSecret(t *testing.T) {
 	pageReq.Header.Set("cookie", session)
 	booted.Handler.ServeHTTP(pageRes, pageReq)
 	html := pageRes.Body.String()
-	for _, want := range []string{"opencode", "sk-fob-", "Logins", "Keys", "Meter", "Cursor"} {
+	for _, want := range []string{"opencode", "sk-fob-", "Logins", "Keys", "Meter", "Usage Trends", "Cursor"} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("missing %q", want)
 		}
@@ -229,7 +230,34 @@ func TestConnectedLoginsRenderFromVault(t *testing.T) {
 	if !strings.Contains(html, "work claude") || strings.Contains(html, "?ok=") {
 		t.Fatalf("%s", html)
 	}
-	for _, want := range []string{"/alpine.min.js", "chart-series", "meter-data"} {
+	for _, want := range []string{"/alpine.min.js", "chart-series", "meter-data", "chart-trends", "trends-data"} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("missing %q", want)
+		}
+	}
+}
+
+func TestUsageTrendsRendersChart(t *testing.T) {
+	booted, session := unlocked(t)
+	defer booted.DB.Close()
+	if err := booted.Fob.Usage.Record(domain.UsageEvent{
+		TS:               time.Now().UnixMilli(),
+		Provider:         domain.ProviderClaude,
+		Model:            "claude-opus-4-7",
+		Inbound:          domain.InboundOpenAIChat,
+		PromptTokens:     1200,
+		CompletionTokens: 300,
+		Status:           "ok",
+		USD:              0.02,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("cookie", session)
+	booted.Handler.ServeHTTP(res, req)
+	html := res.Body.String()
+	for _, want := range []string{"Usage Trends", "chart-trends", "trends-data", "1,200", "1,500", "\"promptTokens\":1200", "\"completionTokens\":300"} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("missing %q", want)
 		}
@@ -248,7 +276,7 @@ func TestDesignCSS(t *testing.T) {
 		t.Fatal(res.Code)
 	}
 	css := res.Body.String()
-	if !strings.Contains(css, "--accent:") || !strings.Contains(css, "--font-display:") || !strings.Contains(css, "--dither-bayer:") {
+	if !strings.Contains(css, "--accent:") || !strings.Contains(css, "--font-display:") || !strings.Contains(css, "--dither-bayer:") || !strings.Contains(css, "card-trends") {
 		t.Fatal(css[:200])
 	}
 }
@@ -262,7 +290,7 @@ func TestPanelJS(t *testing.T) {
 	res := httptest.NewRecorder()
 	booted.Handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/panel.js", nil))
 	js := res.Body.String()
-	if res.Code != 200 || !strings.Contains(js, "/api/panel/keys") || !strings.Contains(js, "/api/panel/sub") || !strings.Contains(js, "closest(\"#sub-load\")") {
+	if res.Code != 200 || !strings.Contains(js, "/api/panel/keys") || !strings.Contains(js, "/api/panel/sub") || !strings.Contains(js, "closest(\"#sub-load\")") || !strings.Contains(js, "drawTrends") {
 		t.Fatal(js)
 	}
 	if !strings.Contains(js, `dlg.returnValue = ""`) {
@@ -380,7 +408,7 @@ func TestPanelSubOmitsUnknownProviders(t *testing.T) {
 	req.Header.Set("cookie", session)
 	booted.Handler.ServeHTTP(res, req)
 	html := res.Body.String()
-	if !strings.Contains(html, ">Sub<") || !strings.Contains(html, "id=\"sub-load\"") || !strings.Contains(html, "/panel.js?v=0.6.2") {
+	if !strings.Contains(html, ">Sub<") || !strings.Contains(html, "id=\"sub-load\"") || !strings.Contains(html, "/panel.js?v=0.6.3") {
 		t.Fatalf("%s", html)
 	}
 }

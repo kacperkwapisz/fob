@@ -255,6 +255,15 @@ function fmtMoney(n) {
   return "$" + (Number(n) || 0).toFixed(2)
 }
 
+function fmtTokens(n) {
+  const v = Number(n) || 0
+  if (v >= 1_000_000_000) return (v / 1_000_000_000).toFixed(1).replace(/\.0$/, "") + "B"
+  if (v >= 1_000_000) return (v / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M"
+  if (v >= 10_000) return Math.round(v / 1_000) + "k"
+  if (v >= 1_000) return (v / 1_000).toFixed(1).replace(/\.0$/, "") + "k"
+  return String(Math.round(v))
+}
+
 function labelProvider(key) {
   if (!key) return ""
   return key.charAt(0).toUpperCase() + key.slice(1)
@@ -383,6 +392,82 @@ function drawProviders(canvas, rows) {
   return { rows: layout, dpr }
 }
 
+function tokensOf(p) {
+  return (Number(p?.promptTokens) || 0) + (Number(p?.completionTokens) || 0)
+}
+
+function drawTrends(canvas, daily) {
+  const { ctx, w, h, dpr } = sizeCanvas(canvas)
+  ctx.clearRect(0, 0, w, h)
+  const pad = { t: 18 * dpr, r: 14 * dpr, b: 28 * dpr, l: 52 * dpr }
+  const points = Array.isArray(daily) && daily.length ? daily : [{ day: "", promptTokens: 0, completionTokens: 0 }]
+  const max = Math.max(1, ...points.map(tokensOf))
+  const innerW = w - pad.l - pad.r
+  const innerH = h - pad.t - pad.b
+  const mute = cssColor("--ink-mute") || "#8e99a6"
+  const grid = cssColor("--line") || "#2a343e"
+  const promptRGB = parseHex(mute)
+  const completionRGB = parseHex(cssColor("--accent") || "#5eead4")
+  const gap = Math.max(dpr, innerW / points.length * 0.22)
+  const barW = Math.max(2 * dpr, innerW / points.length - gap)
+
+  ctx.strokeStyle = grid
+  ctx.lineWidth = dpr
+  for (let i = 0; i < 3; i++) {
+    const y = pad.t + (innerH * i) / 2
+    ctx.beginPath()
+    ctx.moveTo(pad.l, y)
+    ctx.lineTo(w - pad.r, y)
+    ctx.stroke()
+  }
+
+  const layout = []
+  points.forEach((p, i) => {
+    const prompt = Number(p.promptTokens) || 0
+    const completion = Number(p.completionTokens) || 0
+    const total = prompt + completion
+    const x = pad.l + (innerW / points.length) * i + gap / 2
+    const barH = total <= 0 ? 0 : Math.max(2 * dpr, (total / max) * innerH)
+    const y = pad.t + innerH - barH
+    const promptH = total <= 0 ? 0 : (prompt / total) * barH
+    const completionH = barH - promptH
+    if (promptH > 0) {
+      ctx.save()
+      ctx.beginPath()
+      ctx.rect(x, y + completionH, barW, promptH)
+      ctx.clip()
+      ctx.drawImage(makeDither(w, h, promptRGB, "hatch", 0.45), 0, 0)
+      ctx.restore()
+    }
+    if (completionH > 0) {
+      ctx.save()
+      ctx.beginPath()
+      ctx.rect(x, y, barW, completionH)
+      ctx.clip()
+      ctx.drawImage(makeDither(w, h, completionRGB, "bayer", 0.55), 0, 0)
+      ctx.restore()
+    }
+    layout.push({ x, y, w: barW, h: Math.max(barH, 8 * dpr), p })
+  })
+
+  ctx.fillStyle = mute
+  ctx.font = `${11 * dpr}px "IBM Plex Mono", ui-monospace, monospace`
+  ctx.textBaseline = "top"
+  const labelEvery = points.length > 8 ? 2 : 1
+  points.forEach((p, i) => {
+    if (i % labelEvery !== 0 && i !== points.length - 1) return
+    const x = pad.l + (innerW / points.length) * i + gap / 2 + barW / 2
+    ctx.textAlign = i === 0 ? "left" : i === points.length - 1 ? "right" : "center"
+    ctx.fillText(shortDay(p.day), i === 0 ? pad.l : i === points.length - 1 ? w - pad.r : x, h - 18 * dpr)
+  })
+  ctx.textAlign = "right"
+  ctx.textBaseline = "middle"
+  ctx.fillText(fmtTokens(max), pad.l - 8 * dpr, pad.t)
+  ctx.fillText("0", pad.l - 8 * dpr, pad.t + innerH)
+
+  return { bars: layout, dpr }
+}
+
 function bindTip(canvas, tip, locate) {
   if (!canvas || !tip) return
   const onMove = (ev) => {
@@ -406,22 +491,29 @@ function bindTip(canvas, tip, locate) {
   })
 }
 
-function bootCharts() {
-  const node = document.getElementById("meter-data")
-  if (!node) return
-  let data = { daily: [], byProvider: [] }
+function parseJSON(id, fallback) {
+  const node = document.getElementById(id)
+  if (!node) return fallback
   try {
-    data = JSON.parse(node.textContent || "{}")
+    return JSON.parse(node.textContent || "null") ?? fallback
   } catch {
-    return
+    return fallback
   }
+}
+
+function bootCharts() {
+  const data = parseJSON("meter-data", { daily: [], byProvider: [] })
+  const trends = parseJSON("trends-data", [])
   const series = document.getElementById("chart-series")
   const providers = document.getElementById("chart-providers")
+  const trendCanvas = document.getElementById("chart-trends")
   let seriesLayout = { xy: [] }
   let providerLayout = { rows: [] }
+  let trendLayout = { bars: [] }
   const redraw = () => {
     if (series) seriesLayout = drawSeries(series, data.daily || []) || { xy: [] }
     if (providers) providerLayout = drawProviders(providers, data.byProvider || []) || { rows: [] }
+    if (trendCanvas) trendLayout = drawTrends(trendCanvas, Array.isArray(trends) ? trends : []) || { bars: [] }
   }
   redraw()
   if (series) {
@@ -453,9 +545,22 @@ function bootCharts() {
       return { label: `${hit.row.key}  ${fmtMoney(hit.row.usd)}` }
     })
   }
+  if (trendCanvas) {
+    bindTip(trendCanvas, document.getElementById("chart-trends-tip"), (x, y, rect) => {
+      const dpr = trendCanvas.width / rect.width
+      const px = x * dpr
+      const py = y * dpr
+      const hit = (trendLayout.bars || []).find((r) => px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h)
+      if (!hit?.p) return null
+      return {
+        label: `${shortDay(hit.p.day)}  ${fmtTokens(tokensOf(hit.p))}  (${fmtTokens(hit.p.promptTokens)} / ${fmtTokens(hit.p.completionTokens)})`,
+      }
+    })
+  }
   const ro = new ResizeObserver(redraw)
   if (series) ro.observe(series)
   if (providers) ro.observe(providers)
+  if (trendCanvas) ro.observe(trendCanvas)
 }
 
 if (document.readyState === "loading") {
