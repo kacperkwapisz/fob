@@ -51,10 +51,10 @@ func Layout(title, meta, body string) string {
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/design.css?v=0.6.3" />
+    <link rel="stylesheet" href="/design.css?v=0.7.1" />
     <script>document.documentElement.classList.add("js")</script>
     <script src="/alpine.min.js" defer></script>
-    <script src="/panel.js?v=0.6.3" defer></script>
+    <script src="/panel.js?v=0.7.1" defer></script>
   </head>
   <body>
     <a class="skip" href="#main">Skip to content</a>
