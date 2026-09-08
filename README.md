@@ -1,6 +1,6 @@
 # Fob
 
-A local proxy that turns Claude, Codex, Grok, and Cursor subscriptions into an OpenAI-compatible API. One panel for logins, the keys you hand to other tools, and the usage meter.
+A local proxy that turns Claude, Codex, Grok, and Cursor subscriptions — plus any OpenAI-compatible API — into one OpenAI-compatible endpoint. One panel for logins, sources, the keys you hand to other tools, and the usage meter.
 
 Point Cursor, Claude Code, OpenCode, or anything that speaks OpenAI/Anthropic at `http://127.0.0.1:8317/v1`.
 
@@ -26,7 +26,7 @@ Compose **requires** `JWT_SECRET`. Data lives on the `fob-data` volume at `/data
 
 ## OAuth
 
-Claude and Codex OAuth apps only allow their CLI callbacks (`http://localhost:54545/callback` and `http://localhost:1455/auth/callback`). While a login is in flight, Fob binds those ports. If the port is already taken (the real CLI), the panel keeps the paste-callback form — paste the whole failed address bar. Grok uses device-code. Cursor uses CLI deep-control poll (Login) or a dashboard API key (Paste key).
+Claude and Codex OAuth apps only allow their CLI callbacks (`http://localhost:54545/callback` and `http://localhost:1455/auth/callback`). While a login is in flight, Fob binds those ports. If the port is already taken (the real CLI), the panel keeps the paste-callback form — paste the whole failed address bar. Grok uses device-code. Cursor uses CLI deep-control poll (Login) or a dashboard API key (Paste key). OpenAI-compatible sources are unlimited: paste a base URL and key (OpenRouter, Groq, a local llama.cpp, anything that speaks `/v1`). Models list as `slug/id` so they never collide with a sub.
 
 ## Env
 

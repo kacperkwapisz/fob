@@ -209,6 +209,9 @@ func noTimeout(r *http.Request) bool {
 	if strings.HasPrefix(p, "/login/") && !strings.HasSuffix(p, "/finish") {
 		return true
 	}
+	if p == "/sources/openai" {
+		return true
+	}
 	return false
 }
 

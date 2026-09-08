@@ -589,6 +589,110 @@ func TestFailoverDoesNotLogError(t *testing.T) {
 	}
 }
 
+type liveFake struct {
+	fakeExec
+	byID map[string][]domain.ModelInfo
+}
+
+func (f liveFake) ModelsFor(_ context.Context, c domain.Credential) []domain.ModelInfo {
+	return f.byID[c.ID]
+}
+
+func TestOpenAISourceRoutesPrefixedModel(t *testing.T) {
+	var seen []string
+	fob, d := testFob(t, map[domain.ProviderID]provider.Executor{
+		domain.ProviderOpenAI: liveFake{
+			fakeExec: fakeExec{
+				id: domain.ProviderOpenAI, format: domain.FormatOpenAI,
+				fn: func(c domain.Credential) provider.ExecuteResult {
+					seen = append(seen, c.ID)
+					return provider.ExecuteResult{OK: true, Status: 200, Body: map[string]any{
+						"id": "chatcmpl_1", "object": "chat.completion",
+						"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": c.ID}, "finish_reason": "stop"}},
+						"usage":   map[string]any{"prompt_tokens": 1.0, "completion_tokens": 1.0},
+					}}
+				},
+			},
+			byID: map[string][]domain.ModelInfo{
+				"or1": {{ID: "openrouter/gpt-4o", Object: "model", OwnedBy: "openrouter"}},
+				"lm1": {{ID: "local/llama-3", Object: "model", OwnedBy: "local"}},
+			},
+		},
+		domain.ProviderCodex: fakeExec{id: domain.ProviderCodex, format: domain.FormatCodex, fn: func(domain.Credential) provider.ExecuteResult {
+			return provider.ExecuteResult{OK: false, Status: 500}
+		}},
+	})
+	defer d.Close()
+	_, _ = fob.Vault.Save(store.SaveCredential{ID: "or1", Provider: domain.ProviderOpenAI, Label: "OpenRouter", Tokens: domain.CredentialTokens{AccessToken: "k1", Extra: map[string]any{"base_url": "https://openrouter.ai/api", "slug": "openrouter"}}})
+	_, _ = fob.Vault.Save(store.SaveCredential{ID: "lm1", Provider: domain.ProviderOpenAI, Label: "Local", Tokens: domain.CredentialTokens{AccessToken: "k2", Extra: map[string]any{"base_url": "http://127.0.0.1:1234", "slug": "local"}}})
+	created, err := fob.Keys.Create("t", nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _ := fob.Keys.Verify(created.Secret)
+	result, err := Proxy(context.Background(), fob, Request{
+		Inbound: domain.InboundOpenAIChat,
+		Body:    map[string]any{"model": "openrouter/gpt-4o", "messages": []any{map[string]any{"role": "user", "content": "hi"}}},
+		Key:     *key,
+	})
+	if err != nil || !result.OK {
+		t.Fatalf("%+v %v", result, err)
+	}
+	if len(seen) != 1 || seen[0] != "or1" {
+		t.Fatalf("seen %v", seen)
+	}
+	ids := map[string]bool{}
+	for _, m := range ListModels(fob) {
+		ids[m.ID] = true
+	}
+	if !ids["openrouter/gpt-4o"] || !ids["local/llama-3"] {
+		t.Fatalf("listed %+v", ids)
+	}
+}
+
+func TestUnprefixedGPTStillHitsCodexWithOpenAISource(t *testing.T) {
+	var seen []string
+	fob, d := testFob(t, map[domain.ProviderID]provider.Executor{
+		domain.ProviderCodex: fakeExec{
+			id: domain.ProviderCodex, format: domain.FormatCodex,
+			models: []domain.ModelInfo{{ID: "gpt-5.4", Object: "model", OwnedBy: "codex"}},
+			fn: func(c domain.Credential) provider.ExecuteResult {
+				seen = append(seen, c.ID)
+				return provider.ExecuteResult{OK: true, Status: 200, Body: map[string]any{
+					"id": "resp", "object": "response", "output": []any{},
+					"usage": map[string]any{"input_tokens": 1.0, "output_tokens": 1.0},
+				}}
+			},
+		},
+		domain.ProviderOpenAI: liveFake{
+			fakeExec: fakeExec{
+				id: domain.ProviderOpenAI, format: domain.FormatOpenAI,
+				fn: func(c domain.Credential) provider.ExecuteResult {
+					seen = append(seen, c.ID)
+					return provider.ExecuteResult{OK: false, Status: 500}
+				},
+			},
+		},
+	})
+	defer d.Close()
+	_, _ = fob.Vault.Save(store.SaveCredential{ID: "codex-1", Provider: domain.ProviderCodex, Label: "Codex", Tokens: domain.CredentialTokens{AccessToken: "c", Extra: map[string]any{}}})
+	_, _ = fob.Vault.Save(store.SaveCredential{ID: "or1", Provider: domain.ProviderOpenAI, Label: "OpenRouter", Tokens: domain.CredentialTokens{AccessToken: "k", Extra: map[string]any{"base_url": "https://openrouter.ai/api", "slug": "openrouter"}}})
+	created, _ := fob.Keys.Create("t", nil, nil, nil)
+	key, _ := fob.Keys.Verify(created.Secret)
+	result, err := Proxy(context.Background(), fob, Request{
+		Inbound: domain.InboundOpenAIChat,
+		Body:    map[string]any{"model": "gpt-5.4", "messages": []any{map[string]any{"role": "user", "content": "hi"}}},
+		Key:     *key,
+	})
+	if err != nil || !result.OK {
+		t.Fatalf("%+v %v", result, err)
+	}
+	if len(seen) != 1 || seen[0] != "codex-1" {
+		t.Fatalf("seen %v", seen)
+	}
+}
+
+
 func AsMap(v any) map[string]any {
 	m, _ := v.(map[string]any)
 	if m == nil {

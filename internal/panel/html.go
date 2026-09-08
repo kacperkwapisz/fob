@@ -19,6 +19,14 @@ type DashboardProps struct {
 	Usage       UsageProps
 	SubCount    int
 	Settings    SettingsProps
+	Sources     []SourceProps
+}
+
+type SourceProps struct {
+	ID    string
+	Label string
+	Host  string
+	Slug  string
 }
 
 type UsageProps struct {
@@ -51,10 +59,10 @@ func Layout(title, meta, body string) string {
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/design.css?v=0.7.1" />
+    <link rel="stylesheet" href="/design.css?v=0.8.0" />
     <script>document.documentElement.classList.add("js")</script>
     <script src="/alpine.min.js" defer></script>
-    <script src="/panel.js?v=0.7.1" defer></script>
+    <script src="/panel.js?v=0.8.0" defer></script>
   </head>
   <body>
     <a class="skip" href="#main">Skip to content</a>
@@ -161,6 +169,26 @@ func PasteCallbackViewNote(provider, url, hint, note string, danger bool) string
 	return `<section class="gate card">` + inner + `</section>`
 }
 
+func SourceView(label, baseURL, err string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, `<form class="stack" method="post" action="/sources/openai">
+        <label class="field">
+          <span>Label</span>
+          <input type="text" name="label" value="%s" autocomplete="off" placeholder="OpenRouter" />
+        </label>
+        <label class="field">
+          <span>Base URL</span>
+          <input type="url" name="base_url" value="%s" autocomplete="off" required placeholder="https://openrouter.ai/api/v1" />
+        </label>
+        <label class="field">
+          <span>API key</span>
+          <input type="password" name="secret" autocomplete="off" placeholder="sk-… (optional for local)" />
+        </label>
+        <button class="btn btn-primary" type="submit">Connect</button>
+      </form>`, attr(label), attr(baseURL))
+	return gate("Add OpenAI source", "Any OpenAI-compatible API. Fob lists its models as slug/id so they never collide with a sub.", err, b.String())
+}
+
 func SecretView(provider, url, err string) string {
 	var b strings.Builder
 	if url != "" {
@@ -250,7 +278,47 @@ func loginsCard(props DashboardProps) string {
 		}
 		b.WriteString(`</div></li>`)
 	}
-	b.WriteString(`</ul></section>`)
+	b.WriteString(`</ul>`)
+	b.WriteString(sourcesBlock(props.Sources))
+	b.WriteString(`</section>`)
+	return b.String()
+}
+
+func sourcesBlock(sources []SourceProps) string {
+	var b strings.Builder
+	b.WriteString(`<div class="source-block"><h3>OpenAI-compatible</h3><p class="lede">Unlimited sources. Models list as <code>slug/id</code>.</p>`)
+	if len(sources) == 0 {
+		b.WriteString(`<p class="empty">None yet. Add OpenRouter, Groq, a local llama.cpp, anything that speaks /v1.</p>`)
+	} else {
+		b.WriteString(`<ul class="provider-list">`)
+		for _, s := range sources {
+			meta := s.Host
+			if s.Slug != "" {
+				if meta != "" {
+					meta = s.Slug + " · " + meta
+				} else {
+					meta = s.Slug
+				}
+			}
+			fmt.Fprintf(&b, `<li class="provider"><span class="pip pip-ok" aria-hidden="true"></span><div class="provider-meta"><strong>%s</strong><div class="lede">%s</div></div><div class="actions"><form method="post" action="/credentials/%s/delete" data-confirm="Disconnect %s?"><button class="btn btn-danger" type="submit">Out</button></form></div></li>`, esc(s.Label), esc(meta), attr(s.ID), attr(s.Label))
+		}
+		b.WriteString(`</ul>`)
+	}
+	b.WriteString(`<form class="source-form" method="post" action="/sources/openai">
+        <label class="field">
+          <span>Label</span>
+          <input type="text" name="label" autocomplete="off" placeholder="OpenRouter" />
+        </label>
+        <label class="field grow">
+          <span>Base URL</span>
+          <input type="url" name="base_url" autocomplete="off" required placeholder="https://openrouter.ai/api/v1" />
+        </label>
+        <label class="field">
+          <span>API key</span>
+          <input type="password" name="secret" autocomplete="off" placeholder="sk-…" />
+        </label>
+        <button class="btn btn-primary" type="submit">Add source</button>
+      </form></div>`)
 	return b.String()
 }
 

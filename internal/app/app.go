@@ -14,6 +14,7 @@ import (
 	codexexec "github.com/kacperkwapisz/fob/internal/provider/codex"
 	cursorexec "github.com/kacperkwapisz/fob/internal/provider/cursor"
 	grokexec "github.com/kacperkwapisz/fob/internal/provider/grok"
+	openaiexec "github.com/kacperkwapisz/fob/internal/provider/openai"
 	"github.com/kacperkwapisz/fob/internal/proxy"
 	"github.com/kacperkwapisz/fob/internal/store"
 )
@@ -57,6 +58,7 @@ func Create(source map[string]string) (*Booted, error) {
 			domain.ProviderCodex:  codexexec.Executor{ClientID: e.CodexClientID},
 			domain.ProviderGrok:   grokexec.Executor{ClientID: e.GrokClientID},
 			domain.ProviderCursor: &cursorexec.Executor{},
+			domain.ProviderOpenAI: openaiexec.NewExecutor(),
 		},
 	}
 	httpx.SetLogLevel(string(e.LogLevel))

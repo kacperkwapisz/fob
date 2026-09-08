@@ -19,6 +19,9 @@ var requestFns = map[string]requestFn{
 	"openai.chat→cursor":      identityChat,
 	"claude.messages→cursor":  claudeToGrok,
 	"openai.responses→cursor": responsesToGrok,
+	"openai.chat→openai":      identityChat,
+	"claude.messages→openai":  claudeToGrok,
+	"openai.responses→openai": responsesToGrok,
 }
 
 var responseFns = map[string]responseFn{
@@ -34,6 +37,9 @@ var responseFns = map[string]responseFn{
 	"openai.chat→cursor":      grokToOpenaiChat,
 	"claude.messages→cursor":  grokToClaude,
 	"openai.responses→cursor": grokToResponses,
+	"openai.chat→openai":      grokToOpenaiChat,
+	"claude.messages→openai":  grokToClaude,
+	"openai.responses→openai": grokToResponses,
 }
 
 var streamFns = map[string]streamFn{
@@ -49,6 +55,9 @@ var streamFns = map[string]streamFn{
 	"openai.chat→cursor":      grokStreamToOpenaiChat,
 	"claude.messages→cursor":  grokStreamToClaude,
 	"openai.responses→cursor": grokStreamToResponses,
+	"openai.chat→openai":      grokStreamToOpenaiChat,
+	"claude.messages→openai":  grokStreamToClaude,
+	"openai.responses→openai": grokStreamToResponses,
 }
 
 func identityChat(model string, stream bool, body any) RequestResult {

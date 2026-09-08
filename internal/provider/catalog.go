@@ -13,6 +13,7 @@ var providerCatalog = map[domain.ProviderID]string{
 	domain.ProviderCodex:  "openai",
 	domain.ProviderGrok:   "xai",
 	domain.ProviderCursor: "cursor",
+	domain.ProviderOpenAI: "openai",
 }
 
 type catalogLimit struct {

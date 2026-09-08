@@ -253,6 +253,32 @@ func TestCursorTranslateMatrix(t *testing.T) {
 	}
 }
 
+func TestOpenAITranslateMatrix(t *testing.T) {
+	out := TranslateRequest(domain.InboundOpenAIChat, domain.FormatOpenAI, "openrouter/gpt-4o", false, map[string]any{
+		"model":    "openrouter/gpt-4o",
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	})
+	if AsStr(AsMap(out.Body)["model"]) != "openrouter/gpt-4o" {
+		t.Fatal(out.Body)
+	}
+	out = TranslateRequest(domain.InboundClaudeMessages, domain.FormatOpenAI, "openrouter/gpt-4o", false, map[string]any{
+		"model": "openrouter/gpt-4o", "system": "be brief",
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	})
+	if AsStr(AsMap(AsArr(AsMap(out.Body)["messages"])[0])["role"]) != "system" {
+		t.Fatalf("%+v", out.Body)
+	}
+	upstream := map[string]any{
+		"id": "chatcmpl_1", "object": "chat.completion",
+		"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": "hello"}, "finish_reason": "stop"}},
+		"usage":   map[string]any{"prompt_tokens": 1.0, "completion_tokens": 1.0},
+	}
+	resp := AsMap(TranslateResponse(domain.InboundOpenAIChat, domain.FormatOpenAI, "openrouter/gpt-4o", map[string]any{}, upstream))
+	if AsStr(resp["object"]) != "chat.completion" {
+		t.Fatal(resp["object"])
+	}
+}
+
 func TestTranslateGoldenChatToClaude(t *testing.T) {
 	raw, err := os.ReadFile(golden(t, "translate.json"))
 	if err != nil {

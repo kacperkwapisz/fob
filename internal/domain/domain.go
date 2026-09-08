@@ -7,11 +7,21 @@ const (
 	ProviderCodex  ProviderID = "codex"
 	ProviderGrok   ProviderID = "grok"
 	ProviderCursor ProviderID = "cursor"
+	ProviderOpenAI ProviderID = "openai"
 )
 
-var Providers = []ProviderID{ProviderClaude, ProviderCodex, ProviderGrok, ProviderCursor}
+var Providers = []ProviderID{ProviderClaude, ProviderCodex, ProviderGrok, ProviderCursor, ProviderOpenAI}
 
 func IsProviderID(v string) bool {
+	switch ProviderID(v) {
+	case ProviderClaude, ProviderCodex, ProviderGrok, ProviderCursor, ProviderOpenAI:
+		return true
+	default:
+		return false
+	}
+}
+
+func IsOAuthProvider(v string) bool {
 	switch ProviderID(v) {
 	case ProviderClaude, ProviderCodex, ProviderGrok, ProviderCursor:
 		return true
@@ -35,6 +45,7 @@ const (
 	FormatCodex  ExecutorFormat = "codex"
 	FormatGrok   ExecutorFormat = "grok"
 	FormatCursor ExecutorFormat = "cursor"
+	FormatOpenAI ExecutorFormat = "openai"
 )
 
 type LocalKey struct {

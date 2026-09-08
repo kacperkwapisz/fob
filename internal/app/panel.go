@@ -11,6 +11,7 @@ import (
 	"github.com/kacperkwapisz/fob/internal/httpx"
 	"github.com/kacperkwapisz/fob/internal/oauth"
 	"github.com/kacperkwapisz/fob/internal/panel"
+	"github.com/kacperkwapisz/fob/internal/provider/openai"
 	"github.com/kacperkwapisz/fob/internal/proxy"
 	"github.com/kacperkwapisz/fob/internal/session"
 	"github.com/kacperkwapisz/fob/internal/store"
@@ -79,7 +80,7 @@ func registerPanel(mux *httpx.Mux, fob *proxy.Fob, e *env.Env, panelAuth *store.
 			return
 		}
 		providerID := domain.ProviderID(httpx.Param(r, "provider"))
-		if !domain.IsProviderID(string(providerID)) {
+		if !domain.IsOAuthProvider(string(providerID)) {
 			httpx.SeeOther(w, "/", "")
 			return
 		}
@@ -189,7 +190,7 @@ func registerPanel(mux *httpx.Mux, fob *proxy.Fob, e *env.Env, panelAuth *store.
 			return
 		}
 		providerID := domain.ProviderID(httpx.Param(r, "provider"))
-		if !domain.IsProviderID(string(providerID)) {
+		if !domain.IsOAuthProvider(string(providerID)) {
 			httpx.SeeOther(w, "/", "")
 			return
 		}
@@ -207,6 +208,47 @@ func registerPanel(mux *httpx.Mux, fob *proxy.Fob, e *env.Env, panelAuth *store.
 			return
 		}
 		_, _ = fob.Vault.Save(store.SaveCredential{Provider: result.Provider, Label: result.Label, Tokens: result.Tokens, ExpiresAt: result.ExpiresAt})
+		httpx.SeeOther(w, "/", "")
+	})
+	mux.Handle(http.MethodPost, "/sources/openai", func(w http.ResponseWriter, r *http.Request) {
+		if !panelAuthed(r, e, panelAuth) {
+			httpx.SeeOther(w, "/", "")
+			return
+		}
+		body, _ := httpx.ParseBody(r)
+		label := strings.TrimSpace(httpx.FormString(body, "label"))
+		baseURL := strings.TrimSpace(httpx.FormString(body, "base_url"))
+		secret := strings.TrimSpace(httpx.FormString(body, "secret"))
+		fail := func(msg string) {
+			page(w, panel.SourceView(label, baseURL, msg), "Fob — openai", "")
+		}
+		base, err := openai.NormalizeBaseURL(baseURL)
+		if err != nil {
+			fail(err.Error())
+			return
+		}
+		host, _, err := openai.Discover(r.Context(), base, secret)
+		if err != nil {
+			fail(err.Error())
+			return
+		}
+		if label == "" {
+			label = host
+		}
+		existing, _ := fob.Vault.List(domain.ProviderOpenAI)
+		slug := openai.UniqueSlug(existing, label)
+		_, err = fob.Vault.Save(store.SaveCredential{
+			Provider: domain.ProviderOpenAI,
+			Label:    label,
+			Tokens: domain.CredentialTokens{
+				AccessToken: secret,
+				Extra:       map[string]any{"base_url": base, "slug": slug, "kind": "openai"},
+			},
+		})
+		if err != nil {
+			fail(err.Error())
+			return
+		}
 		httpx.SeeOther(w, "/", "")
 	})
 	mux.Handle(http.MethodPost, "/settings/cursor", func(w http.ResponseWriter, r *http.Request) {
@@ -299,10 +341,18 @@ func dashboard(fob *proxy.Fob, settings *store.SettingsStore) string {
 	prefix, _ := settings.Get(proxy.SettingCursorPrefix)
 	grok, _ := settings.Get(proxy.SettingCursorGrokFailover)
 	subN := 0
+	var sources []panel.SourceProps
 	for _, c := range creds {
 		switch c.Provider {
 		case domain.ProviderClaude, domain.ProviderCodex, domain.ProviderGrok, domain.ProviderCursor:
 			subN++
+		case domain.ProviderOpenAI:
+			sources = append(sources, panel.SourceProps{
+				ID:    c.ID,
+				Label: c.Label,
+				Host:  openai.SourceHost(c),
+				Slug:  openai.SourceSlug(c),
+			})
 		}
 	}
 	return panel.Dashboard(panel.DashboardProps{
@@ -313,6 +363,7 @@ func dashboard(fob *proxy.Fob, settings *store.SettingsStore) string {
 		},
 		SubCount: subN,
 		Settings: panel.SettingsProps{CursorPrefix: prefix == "1", GrokFailover: grok == "1"},
+		Sources:  sources,
 	})
 }
 

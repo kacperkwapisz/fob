@@ -18,6 +18,7 @@ const PROVIDER_COLORS = {
   codex: "--p-codex",
   grok: "--p-grok",
   cursor: "--p-cursor",
+  openai: "--p-openai",
 }
 
 document.addEventListener("alpine:init", () => {
