@@ -90,9 +90,24 @@ type ModelPrice struct {
 	CacheWrite *float64
 }
 
+type ModelCostJSON struct {
+	Input      *float64 `json:"input,omitempty"`
+	Output     *float64 `json:"output,omitempty"`
+	CacheRead  *float64 `json:"cache_read,omitempty"`
+	CacheWrite *float64 `json:"cache_write,omitempty"`
+}
+
 type ModelInfo struct {
-	ID          string `json:"id"`
-	Object      string `json:"object"`
-	OwnedBy     string `json:"owned_by"`
-	DisplayName string `json:"display_name,omitempty"`
+	ID              string         `json:"id"`
+	Object          string         `json:"object"`
+	OwnedBy         string         `json:"owned_by"`
+	Name            string         `json:"name,omitempty"`
+	DisplayName     string         `json:"display_name,omitempty"`
+	ContextLength   int            `json:"context_length,omitempty"`
+	MaxOutputTokens int            `json:"max_output_tokens,omitempty"`
+	Input           []string       `json:"input,omitempty"`
+	InputModalities []string       `json:"input_modalities,omitempty"`
+	Reasoning       bool           `json:"reasoning"`
+	Efforts         []string       `json:"efforts,omitempty"`
+	Cost            *ModelCostJSON `json:"cost,omitempty"`
 }

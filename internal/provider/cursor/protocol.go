@@ -105,9 +105,10 @@ func resolveModelID(model, effort string, fast ...bool) string {
 		wantFast = fast[0]
 	}
 	if variants := lookupVariants(base); variants != nil {
-		pair := variants[effort]
-		if pick := pickVariant(pair, wantFast); pick != "" {
-			return pick
+		for _, key := range effortKeys(effort) {
+			if pick := pickVariant(variants[key], wantFast); pick != "" {
+				return pick
+			}
 		}
 	}
 	known := KnownIDs()
@@ -128,6 +129,17 @@ func resolveModelID(model, effort string, fast ...bool) string {
 		base += "-fast"
 	}
 	return base
+}
+
+func effortKeys(effort string) []string {
+	switch effort {
+	case "xhigh":
+		return []string{"xhigh", "extra-high"}
+	case "none":
+		return []string{"none", "minimal"}
+	default:
+		return []string{effort}
+	}
 }
 
 func pickVariant(pair variantPair, wantFast bool) string {
@@ -191,7 +203,13 @@ func resolveRequestedModel(model, effort string, fast ...bool) *requestedModelSe
 	if variants == nil {
 		return nil
 	}
-	pair := variants[effort]
+	var pair variantPair
+	for _, key := range effortKeys(effort) {
+		pair = variants[key]
+		if pair.standard != "" || pair.fast != "" {
+			break
+		}
+	}
 	if pair.standard == "" && pair.fast == "" {
 		return nil
 	}
