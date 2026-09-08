@@ -83,6 +83,10 @@ func TestExpandKeepsVariantIDs(t *testing.T) {
 	if got := resolveModelID("composer-2.5", "", true); got != "composer-2.5-fast" {
 		t.Fatalf("got %s", got)
 	}
+	listed := ToModelInfo(models, false)
+	if len(listed) != 1 || !equalStrings(listed[0].Efforts, []string{"high"}) {
+		t.Fatalf("live variantIds efforts %+v", listed)
+	}
 }
 
 func TestExpandVariants(t *testing.T) {
@@ -175,8 +179,15 @@ func TestCollapseForListDropsEffortAndFast(t *testing.T) {
 		t.Fatalf("opus efforts %v", opus.Efforts)
 	}
 	thinking := byID["claude-opus-5-thinking"]
-	if !thinking.Reasoning || len(thinking.Efforts) != 0 {
-		t.Fatalf("thinking twin must not advertise a ladder %+v", thinking)
+	if !thinking.Reasoning || !equalStrings(thinking.Efforts, []string{"low", "medium", "high", "xhigh", "max"}) {
+		t.Fatalf("thinking ladder %+v", thinking)
+	}
+	gpt52 := byID["gpt-5.2"]
+	if gpt52.ContextLength != 400000 || gpt52.MaxOutputTokens != 128000 {
+		t.Fatalf("gpt-5.2 limits %+v", gpt52)
+	}
+	if gpt52.Cost == nil || gpt52.Cost.Input == nil || *gpt52.Cost.Input != 1.75 {
+		t.Fatalf("gpt-5.2 cost %+v", gpt52.Cost)
 	}
 	gpt := byID["gpt-5.5"]
 	if !equalStrings(gpt.Efforts, []string{"none", "low", "medium", "high", "xhigh"}) {

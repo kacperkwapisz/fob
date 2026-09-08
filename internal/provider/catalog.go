@@ -193,22 +193,19 @@ func Limits(id string) (contextLength, maxOutput int, cost *domain.ModelCostJSON
 }
 
 func limitsIn(provider domain.ProviderID, id string) (int, int, *domain.ModelCostJSON, []string, bool) {
-	for _, m := range CatalogModels(provider) {
-		if m.ID == id {
-			return m.ContextLength, m.MaxOutputTokens, m.Cost, m.InputModalities, true
-		}
-	}
-	if provider != domain.ProviderCursor {
-		return 0, 0, nil, nil, false
-	}
-	rows, ok := catalogPack("cursor")
+	rows, ok := catalogPack(providerCatalog[provider])
 	if !ok {
 		return 0, 0, nil, nil, false
 	}
 	for _, m := range rows {
-		if m.ID == id {
-			return 0, 0, nonemptyCost(m.Cost), []string{"text", "image"}, true
+		if m.ID != id {
+			continue
 		}
+		var ctx, maxOut int
+		if m.Limit != nil {
+			ctx, maxOut = m.Limit.Context, m.Limit.Output
+		}
+		return ctx, maxOut, nonemptyCost(m.Cost), []string{"text", "image"}, true
 	}
 	return 0, 0, nil, nil, false
 }

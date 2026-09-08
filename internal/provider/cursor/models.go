@@ -405,10 +405,8 @@ func ToModelInfo(models []Model, prefix bool) []domain.ModelInfo {
 		if info.MaxOutputTokens == 0 {
 			info.MaxOutputTokens = 64000
 		}
+		info.Efforts = familyEffortsFrom(source, publicFamilyID(m.ID))
 		thinking := strings.Contains(m.ID, "-thinking") || strings.Contains(strings.ToLower(m.ID), "reasoning")
-		if !thinking {
-			info.Efforts = familyEffortsFrom(source, publicFamilyID(m.ID))
-		}
 		info.Reasoning = thinking || len(info.Efforts) > 0
 		out[i] = info
 	}
@@ -422,10 +420,16 @@ func familyEffortsFrom(models []Model, family string) []string {
 			continue
 		}
 		e := canonicalEffort(effortFromID(m.ID))
-		if e == "" {
-			continue
+		if e != "" {
+			has[e] = true
 		}
-		has[e] = true
+		for key := range m.VariantIDs {
+			e := canonicalEffort(key)
+			if e == "" {
+				continue
+			}
+			has[e] = true
+		}
 	}
 	var out []string
 	for _, e := range []string{"none", "low", "medium", "high", "xhigh", "max"} {

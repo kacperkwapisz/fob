@@ -107,7 +107,7 @@ type ModelInfo struct {
 	MaxOutputTokens int            `json:"max_output_tokens,omitempty"`
 	Input           []string       `json:"input,omitempty"`
 	InputModalities []string       `json:"input_modalities,omitempty"`
-	Reasoning       bool           `json:"reasoning"`
+	Reasoning       bool           `json:"reasoning,omitempty"`
 	Efforts         []string       `json:"efforts,omitempty"`
 	Cost            *ModelCostJSON `json:"cost,omitempty"`
 }

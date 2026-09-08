@@ -78,6 +78,27 @@ func TestCatalogExposesDiscoveryFields(t *testing.T) {
 	}
 }
 
+func TestLimitsReadsOpenAISnapshotOutsideCodexAllowlist(t *testing.T) {
+	ctx, maxOut, cost, input, ok := Limits("gpt-5.2")
+	if !ok {
+		t.Fatal("missing gpt-5.2")
+	}
+	if ctx != 400000 || maxOut != 128000 {
+		t.Fatalf("limits %d %d", ctx, maxOut)
+	}
+	if cost == nil || cost.Input == nil || *cost.Input != 1.75 {
+		t.Fatalf("cost %+v", cost)
+	}
+	if !equalStrings(input, []string{"text", "image"}) {
+		t.Fatalf("input %v", input)
+	}
+	for _, m := range CatalogModels(domain.ProviderCodex) {
+		if m.ID == "gpt-5.2" {
+			t.Fatal("codex list leaked gpt-5.2")
+		}
+	}
+}
+
 func TestCatalogCodexChatGPTAllowlist(t *testing.T) {
 	got := map[string]bool{}
 	for _, m := range CatalogModels(domain.ProviderCodex) {

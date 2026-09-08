@@ -112,6 +112,24 @@ func TestModelsDiscoveryFields(t *testing.T) {
 	if len(grok.InputModalities) == 0 || grok.InputModalities[0] != "text" {
 		t.Fatalf("input %+v", grok.InputModalities)
 	}
+	var listed map[string]any
+	if err := json.Unmarshal(res.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, row := range listed["data"].([]any) {
+		m := row.(map[string]any)
+		if m["id"] != "grok-4.20-0309-non-reasoning" {
+			continue
+		}
+		found = true
+		if _, ok := m["reasoning"]; ok {
+			t.Fatalf("non-reasoning still serializes reasoning: %+v", m)
+		}
+	}
+	if !found {
+		t.Fatal("missing non-reasoning")
+	}
 }
 
 func TestModelsUnauthorized(t *testing.T) {

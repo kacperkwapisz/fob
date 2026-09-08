@@ -113,15 +113,21 @@ func resolveModelID(model, effort string, fast ...bool) string {
 	}
 	known := KnownIDs()
 	if effort != "" {
-		candidate := base + "-" + effort
-		if wantFast {
-			if hit := firstKnown(known, candidate+"-fast", candidate); hit != "" {
+		var last string
+		for _, key := range effortKeys(effort) {
+			candidate := base + "-" + key
+			last = candidate
+			if wantFast {
+				if hit := firstKnown(known, candidate+"-fast", candidate); hit != "" {
+					return hit
+				}
+			} else if hit := firstKnown(known, candidate, candidate+"-fast"); hit != "" {
 				return hit
 			}
-		} else if hit := firstKnown(known, candidate, candidate+"-fast"); hit != "" {
-			return hit
 		}
-		base = candidate
+		if last != "" {
+			base = last
+		}
 	} else if mapped := MapNativeToWire(model, known); mapped != "" {
 		return mapped
 	}
@@ -204,9 +210,11 @@ func resolveRequestedModel(model, effort string, fast ...bool) *requestedModelSe
 		return nil
 	}
 	var pair variantPair
+	matched := effort
 	for _, key := range effortKeys(effort) {
 		pair = variants[key]
 		if pair.standard != "" || pair.fast != "" {
+			matched = key
 			break
 		}
 	}
@@ -228,8 +236,8 @@ func resolveRequestedModel(model, effort string, fast ...bool) *requestedModelSe
 		paramBase = strings.TrimSuffix(paramBase, "-thinking")
 		params = append(params, struct{ ID, Value string }{"thinking", "true"})
 	}
-	if effort != "" {
-		params = append(params, struct{ ID, Value string }{"effort", effort})
+	if matched != "" {
+		params = append(params, struct{ ID, Value string }{"effort", matched})
 	}
 	hasFastTwin := false
 	for _, v := range variants {
