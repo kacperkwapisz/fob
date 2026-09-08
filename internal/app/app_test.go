@@ -61,6 +61,77 @@ func TestModelsEmptyArrayNotNull(t *testing.T) {
 	}
 }
 
+func TestModelsDiscoveryFields(t *testing.T) {
+	booted, err := Create(map[string]string{"JWT_SECRET": secret, "DATABASE_PATH": ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer booted.DB.Close()
+	if _, err := booted.Fob.Vault.Save(store.SaveCredential{
+		Provider: domain.ProviderGrok, Label: "grok",
+		Tokens: domain.CredentialTokens{AccessToken: "t", Extra: map[string]any{}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	created, err := booted.Fob.Keys.Create("t", nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("authorization", "Bearer "+created.Secret)
+	booted.Handler.ServeHTTP(res, req)
+	if res.Code != 200 {
+		t.Fatalf("status %d", res.Code)
+	}
+	var body struct {
+		Data []domain.ModelInfo `json:"data"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	var grok *domain.ModelInfo
+	for i := range body.Data {
+		if body.Data[i].ID == "grok-4.6" {
+			grok = &body.Data[i]
+			break
+		}
+	}
+	if grok == nil {
+		t.Fatalf("missing grok-4.6 in %s", res.Body.String())
+	}
+	if grok.ContextLength != 500000 || grok.MaxOutputTokens != 500000 {
+		t.Fatalf("limits %+v", grok)
+	}
+	if grok.Cost == nil || grok.Cost.Input == nil || *grok.Cost.Input != 2 {
+		t.Fatalf("cost %+v", grok.Cost)
+	}
+	if !grok.Reasoning || len(grok.Efforts) == 0 {
+		t.Fatalf("reasoning %+v", grok)
+	}
+	if len(grok.InputModalities) == 0 || grok.InputModalities[0] != "text" {
+		t.Fatalf("input %+v", grok.InputModalities)
+	}
+	var listed map[string]any
+	if err := json.Unmarshal(res.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, row := range listed["data"].([]any) {
+		m := row.(map[string]any)
+		if m["id"] != "grok-4.20-0309-non-reasoning" {
+			continue
+		}
+		found = true
+		if _, ok := m["reasoning"]; ok {
+			t.Fatalf("non-reasoning still serializes reasoning: %+v", m)
+		}
+	}
+	if !found {
+		t.Fatal("missing non-reasoning")
+	}
+}
+
 func TestModelsUnauthorized(t *testing.T) {
 	booted, err := Create(map[string]string{"JWT_SECRET": secret, "DATABASE_PATH": ":memory:"})
 	if err != nil {

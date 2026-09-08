@@ -37,6 +37,68 @@ func TestCatalogDropsImageAndImagine(t *testing.T) {
 	}
 }
 
+func TestCatalogExposesDiscoveryFields(t *testing.T) {
+	models := CatalogModels(domain.ProviderGrok)
+	byID := map[string]domain.ModelInfo{}
+	for _, m := range models {
+		byID[m.ID] = m
+	}
+	grok := byID["grok-4.6"]
+	if grok.ContextLength != 500000 || grok.MaxOutputTokens != 500000 {
+		t.Fatalf("grok-4.6 limits %+v", grok)
+	}
+	if grok.Name != "Grok 4.6" || grok.DisplayName != "Grok 4.6" {
+		t.Fatalf("name %+v", grok)
+	}
+	if !equalStrings(grok.InputModalities, []string{"text", "image"}) || !equalStrings(grok.Input, []string{"text", "image"}) {
+		t.Fatalf("input %+v", grok.InputModalities)
+	}
+	if !grok.Reasoning || !equalStrings(grok.Efforts, []string{"low", "medium", "high", "xhigh"}) {
+		t.Fatalf("efforts %+v reasoning %v", grok.Efforts, grok.Reasoning)
+	}
+	if grok.Cost == nil || grok.Cost.Input == nil || *grok.Cost.Input != 2 {
+		t.Fatalf("cost %+v", grok.Cost)
+	}
+
+	non := byID["grok-4.20-0309-non-reasoning"]
+	if non.Reasoning || len(non.Efforts) != 0 {
+		t.Fatalf("non-reasoning %+v", non)
+	}
+	reasoning := byID["grok-4.20-0309-reasoning"]
+	if !reasoning.Reasoning || len(reasoning.Efforts) != 0 {
+		t.Fatalf("reasoning twin %+v", reasoning)
+	}
+
+	claude := CatalogModels(domain.ProviderClaude)[0]
+	if claude.ID != "claude-opus-4-7" || claude.ContextLength != 1000000 || claude.MaxOutputTokens != 128000 {
+		t.Fatalf("claude %+v", claude)
+	}
+	if !equalStrings(claude.Efforts, []string{"low", "medium", "high", "xhigh", "max"}) {
+		t.Fatalf("claude efforts %v", claude.Efforts)
+	}
+}
+
+func TestLimitsReadsOpenAISnapshotOutsideCodexAllowlist(t *testing.T) {
+	ctx, maxOut, cost, input, ok := Limits("gpt-5.2")
+	if !ok {
+		t.Fatal("missing gpt-5.2")
+	}
+	if ctx != 400000 || maxOut != 128000 {
+		t.Fatalf("limits %d %d", ctx, maxOut)
+	}
+	if cost == nil || cost.Input == nil || *cost.Input != 1.75 {
+		t.Fatalf("cost %+v", cost)
+	}
+	if !equalStrings(input, []string{"text", "image"}) {
+		t.Fatalf("input %v", input)
+	}
+	for _, m := range CatalogModels(domain.ProviderCodex) {
+		if m.ID == "gpt-5.2" {
+			t.Fatal("codex list leaked gpt-5.2")
+		}
+	}
+}
+
 func TestCatalogCodexChatGPTAllowlist(t *testing.T) {
 	got := map[string]bool{}
 	for _, m := range CatalogModels(domain.ProviderCodex) {
@@ -52,6 +114,18 @@ func TestCatalogCodexChatGPTAllowlist(t *testing.T) {
 			t.Fatalf("unexpected %s", id)
 		}
 	}
+}
+
+func equalStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func contains(s, sub string) bool {

@@ -1,6 +1,10 @@
 package cursor
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/kacperkwapisz/fob/internal/domain"
+)
 
 func TestPublicIDs(t *testing.T) {
 	if PublicID("claude-opus-5-medium") != "claude-opus-5-medium" {
@@ -78,6 +82,10 @@ func TestExpandKeepsVariantIDs(t *testing.T) {
 	RegisterModelVariants(models)
 	if got := resolveModelID("composer-2.5", "", true); got != "composer-2.5-fast" {
 		t.Fatalf("got %s", got)
+	}
+	listed := ToModelInfo(models, false)
+	if len(listed) != 1 || !equalStrings(listed[0].Efforts, []string{"high"}) {
+		t.Fatalf("live variantIds efforts %+v", listed)
 	}
 }
 
@@ -159,6 +167,51 @@ func TestCollapseForListDropsEffortAndFast(t *testing.T) {
 	if n := len(collapsed); n > 50 || n < 20 {
 		t.Fatalf("collapsed len %d", n)
 	}
+	byID := map[string]domain.ModelInfo{}
+	for _, m := range listed {
+		byID[m.ID] = m
+	}
+	opus := byID["claude-opus-5"]
+	if opus.ContextLength != 1000000 || opus.MaxOutputTokens != 128000 {
+		t.Fatalf("opus limits %+v", opus)
+	}
+	if !equalStrings(opus.Efforts, []string{"low", "medium", "high"}) {
+		t.Fatalf("opus efforts %v", opus.Efforts)
+	}
+	thinking := byID["claude-opus-5-thinking"]
+	if !thinking.Reasoning || !equalStrings(thinking.Efforts, []string{"low", "medium", "high", "xhigh", "max"}) {
+		t.Fatalf("thinking ladder %+v", thinking)
+	}
+	gpt52 := byID["gpt-5.2"]
+	if gpt52.ContextLength != 400000 || gpt52.MaxOutputTokens != 128000 {
+		t.Fatalf("gpt-5.2 limits %+v", gpt52)
+	}
+	if gpt52.Cost == nil || gpt52.Cost.Input == nil || *gpt52.Cost.Input != 1.75 {
+		t.Fatalf("gpt-5.2 cost %+v", gpt52.Cost)
+	}
+	gpt := byID["gpt-5.5"]
+	if !equalStrings(gpt.Efforts, []string{"none", "low", "medium", "high", "xhigh"}) {
+		t.Fatalf("gpt-5.5 efforts %v", gpt.Efforts)
+	}
+	composer := byID["composer-2.5"]
+	if composer.Cost == nil || composer.Cost.Input == nil || *composer.Cost.Input != 0.5 {
+		t.Fatalf("composer cost %+v", composer.Cost)
+	}
+	if len(composer.Efforts) != 0 {
+		t.Fatalf("composer efforts %v", composer.Efforts)
+	}
+}
+
+func equalStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestMapNativeToWireThinking(t *testing.T) {

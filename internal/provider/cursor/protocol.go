@@ -105,22 +105,29 @@ func resolveModelID(model, effort string, fast ...bool) string {
 		wantFast = fast[0]
 	}
 	if variants := lookupVariants(base); variants != nil {
-		pair := variants[effort]
-		if pick := pickVariant(pair, wantFast); pick != "" {
-			return pick
+		for _, key := range effortKeys(effort) {
+			if pick := pickVariant(variants[key], wantFast); pick != "" {
+				return pick
+			}
 		}
 	}
 	known := KnownIDs()
 	if effort != "" {
-		candidate := base + "-" + effort
-		if wantFast {
-			if hit := firstKnown(known, candidate+"-fast", candidate); hit != "" {
+		var last string
+		for _, key := range effortKeys(effort) {
+			candidate := base + "-" + key
+			last = candidate
+			if wantFast {
+				if hit := firstKnown(known, candidate+"-fast", candidate); hit != "" {
+					return hit
+				}
+			} else if hit := firstKnown(known, candidate, candidate+"-fast"); hit != "" {
 				return hit
 			}
-		} else if hit := firstKnown(known, candidate, candidate+"-fast"); hit != "" {
-			return hit
 		}
-		base = candidate
+		if last != "" {
+			base = last
+		}
 	} else if mapped := MapNativeToWire(model, known); mapped != "" {
 		return mapped
 	}
@@ -128,6 +135,17 @@ func resolveModelID(model, effort string, fast ...bool) string {
 		base += "-fast"
 	}
 	return base
+}
+
+func effortKeys(effort string) []string {
+	switch effort {
+	case "xhigh":
+		return []string{"xhigh", "extra-high"}
+	case "none":
+		return []string{"none", "minimal"}
+	default:
+		return []string{effort}
+	}
 }
 
 func pickVariant(pair variantPair, wantFast bool) string {
@@ -191,7 +209,15 @@ func resolveRequestedModel(model, effort string, fast ...bool) *requestedModelSe
 	if variants == nil {
 		return nil
 	}
-	pair := variants[effort]
+	var pair variantPair
+	matched := effort
+	for _, key := range effortKeys(effort) {
+		pair = variants[key]
+		if pair.standard != "" || pair.fast != "" {
+			matched = key
+			break
+		}
+	}
 	if pair.standard == "" && pair.fast == "" {
 		return nil
 	}
@@ -210,8 +236,8 @@ func resolveRequestedModel(model, effort string, fast ...bool) *requestedModelSe
 		paramBase = strings.TrimSuffix(paramBase, "-thinking")
 		params = append(params, struct{ ID, Value string }{"thinking", "true"})
 	}
-	if effort != "" {
-		params = append(params, struct{ ID, Value string }{"effort", effort})
+	if matched != "" {
+		params = append(params, struct{ ID, Value string }{"effort", matched})
 	}
 	hasFastTwin := false
 	for _, v := range variants {

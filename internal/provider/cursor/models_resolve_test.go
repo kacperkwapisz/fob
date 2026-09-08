@@ -20,3 +20,19 @@ func TestResolveRequestedModelFromSnapshot(t *testing.T) {
 		t.Fatal("empty model id")
 	}
 }
+
+func TestResolveRequestedModelAliasesXhigh(t *testing.T) {
+	sel := resolveRequestedModel("gpt-5.5", "xhigh")
+	if sel == nil {
+		t.Fatal("nil")
+	}
+	got := ""
+	for _, p := range sel.Parameters {
+		if p.ID == "effort" {
+			got = p.Value
+		}
+	}
+	if got != "extra-high" {
+		t.Fatalf("effort %q params %+v", got, sel.Parameters)
+	}
+}

@@ -13,13 +13,16 @@ import (
 
 	"github.com/kacperkwapisz/fob/internal/domain"
 	"github.com/kacperkwapisz/fob/internal/httpx"
+	"github.com/kacperkwapisz/fob/internal/provider"
 	"github.com/kacperkwapisz/fob/internal/translate"
 )
 
 type Model struct {
-	ID         string
-	Name       string
-	VariantIDs map[string]variantPair
+	ID            string
+	Name          string
+	ContextWindow int
+	MaxTokens     int
+	VariantIDs    map[string]variantPair
 }
 
 func PublicID(wireID string) string {
@@ -76,7 +79,7 @@ func CollapseForList(models []Model) []Model {
 		rank := variantListRank(m)
 		if g, ok := groups[key]; ok {
 			if rank < g.rank {
-				g.rep = Model{ID: key, Name: m.Name, VariantIDs: m.VariantIDs}
+				g.rep = Model{ID: key, Name: m.Name, ContextWindow: m.ContextWindow, MaxTokens: m.MaxTokens, VariantIDs: m.VariantIDs}
 				g.rank = rank
 			}
 			continue
@@ -167,15 +170,17 @@ func ExpandAvailableModels(body any) []Model {
 		}
 		rawVariants := translate.AsArr(rec["variants"])
 		variantIDs := readVariantIDs(rec["variantIds"], rec["variant_ids"])
+		ctx := jsonInt(firstNonNil(rec["contextWindow"], rec["context_window"]))
+		maxTok := jsonInt(firstNonNil(rec["maxTokens"], rec["max_tokens"]))
 		if len(rawVariants) == 0 {
-			byID[baseID] = Model{ID: baseID, Name: baseDisplay, VariantIDs: variantIDs}
+			byID[baseID] = Model{ID: baseID, Name: baseDisplay, ContextWindow: ctx, MaxTokens: maxTok, VariantIDs: variantIDs}
 			continue
 		}
 		for _, variant := range rawVariants {
 			v := translate.AsMap(variant)
 			params := readParams(firstNonNil(v["parameterValues"], v["parameter_values"]))
 			id := WireIDFromVariant(baseID, params)
-			byID[id] = Model{ID: id, Name: displayNameForVariant(baseDisplay, params), VariantIDs: variantIDs}
+			byID[id] = Model{ID: id, Name: displayNameForVariant(baseDisplay, params), ContextWindow: ctx, MaxTokens: maxTok, VariantIDs: variantIDs}
 		}
 	}
 	out := make([]Model, 0, len(byID))
@@ -259,12 +264,14 @@ var (
 
 func init() {
 	var raw []struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
+		ID            string `json:"id"`
+		Name          string `json:"name"`
+		ContextWindow int    `json:"contextWindow"`
+		MaxTokens     int    `json:"maxTokens"`
 	}
 	_ = json.Unmarshal(modelsRawJSON, &raw)
 	for _, m := range raw {
-		snapshot = append(snapshot, Model{ID: m.ID, Name: m.Name})
+		snapshot = append(snapshot, Model{ID: m.ID, Name: m.Name, ContextWindow: m.ContextWindow, MaxTokens: m.MaxTokens})
 	}
 	indexVariants(snapshot)
 }
@@ -365,6 +372,7 @@ func RegisterModelVariants(models []Model) {
 func Snapshot() []Model { return snapshot }
 
 func ToModelInfo(models []Model, prefix bool) []domain.ModelInfo {
+	source := models
 	models = CollapseForList(models)
 	out := make([]domain.ModelInfo, len(models))
 	for i, m := range models {
@@ -372,9 +380,86 @@ func ToModelInfo(models []Model, prefix bool) []domain.ModelInfo {
 		if prefix {
 			id = "cursor/" + id
 		}
-		out[i] = domain.ModelInfo{ID: id, Object: "model", OwnedBy: "cursor", DisplayName: m.Name}
+		info := domain.ModelInfo{
+			ID: id, Object: "model", OwnedBy: "cursor",
+			Name: m.Name, DisplayName: m.Name,
+			ContextLength: m.ContextWindow, MaxOutputTokens: m.MaxTokens,
+		}
+		if ctx, maxOut, cost, input, ok := provider.Limits(id); ok {
+			if ctx > 0 {
+				info.ContextLength = ctx
+			}
+			if maxOut > 0 {
+				info.MaxOutputTokens = maxOut
+			}
+			info.Cost = cost
+			info.Input = input
+			info.InputModalities = input
+		} else {
+			info.Input = []string{"text", "image"}
+			info.InputModalities = info.Input
+		}
+		if info.ContextLength == 0 {
+			info.ContextLength = 200000
+		}
+		if info.MaxOutputTokens == 0 {
+			info.MaxOutputTokens = 64000
+		}
+		info.Efforts = familyEffortsFrom(source, publicFamilyID(m.ID))
+		thinking := strings.Contains(m.ID, "-thinking") || strings.Contains(strings.ToLower(m.ID), "reasoning")
+		info.Reasoning = thinking || len(info.Efforts) > 0
+		out[i] = info
 	}
 	return out
+}
+
+func familyEffortsFrom(models []Model, family string) []string {
+	has := map[string]bool{}
+	for _, m := range models {
+		if publicFamilyID(m.ID) != family {
+			continue
+		}
+		e := canonicalEffort(effortFromID(m.ID))
+		if e != "" {
+			has[e] = true
+		}
+		for key := range m.VariantIDs {
+			e := canonicalEffort(key)
+			if e == "" {
+				continue
+			}
+			has[e] = true
+		}
+	}
+	var out []string
+	for _, e := range []string{"none", "low", "medium", "high", "xhigh", "max"} {
+		if has[e] {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func effortFromID(id string) string {
+	id = strings.TrimSuffix(id, "-fast")
+	core := strings.ReplaceAll(id, "-thinking", "")
+	for _, s := range effortSuffixes {
+		if strings.HasSuffix(core, s) {
+			return strings.TrimPrefix(s, "-")
+		}
+	}
+	return ""
+}
+
+func canonicalEffort(effort string) string {
+	switch effort {
+	case "extra-high":
+		return "xhigh"
+	case "minimal":
+		return "none"
+	default:
+		return effort
+	}
 }
 
 func FetchAvailable(ctx context.Context, accessToken string) ([]Model, error) {
@@ -525,6 +610,14 @@ func firstNonNil(vals ...any) any {
 		}
 	}
 	return nil
+}
+
+func jsonInt(v any) int {
+	n, ok := translate.AsNum(v)
+	if !ok || n <= 0 {
+		return 0
+	}
+	return int(n)
 }
 
 func KnownIDs() []string {

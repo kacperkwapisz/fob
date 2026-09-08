@@ -45,7 +45,7 @@ Cursor effort and fast variants (`-high`, `-medium`, `-fast`, …) collapse to o
 ## API
 
 - `GET /health`
-- `GET /v1/models`
+- `GET /v1/models` — OpenAI list plus discovery fields: `name`, `context_length`, `max_output_tokens`, `input` / `input_modalities`, `reasoning`, `efforts`, `cost`. Twin ids (`*-thinking`, `*-reasoning`) stay siblings; a ladder is only advertised when that id actually takes `reasoning_effort`. Fast is not a catalog field.
 - `POST /v1/chat/completions`
 - `POST /v1/messages`
 - `POST /v1/messages/count_tokens`
