@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/kacperkwapisz/fob/internal/domain"
@@ -16,8 +17,14 @@ func TestSlugify(t *testing.T) {
 	if got := Slugify("123 start"); got != "s-123-start" {
 		t.Fatalf("got %s", got)
 	}
-	if got := Slugify(""); got != "openai" {
+	if got := Slugify(""); got != "src" {
 		t.Fatalf("got %s", got)
+	}
+	if got := Slugify("Żółć"); got != "src" {
+		t.Fatalf("unicode %s", got)
+	}
+	if !ValidSlug(Slugify(strings.Repeat("a", 80))) {
+		t.Fatal("long label should clip to a valid slug")
 	}
 	if !ValidSlug(Slugify("OpenRouter")) {
 		t.Fatal("openrouter should be valid")
@@ -73,13 +80,24 @@ func TestUniqueSlugSkipsReservedAndCollisions(t *testing.T) {
 	if got := UniqueSlug(nil, "local"); got != "local" {
 		t.Fatalf("got %s", got)
 	}
+	long := strings.Repeat("a", 48)
+	existing = []domain.Credential{
+		{Provider: domain.ProviderOpenAI, Tokens: domain.CredentialTokens{Extra: map[string]any{"slug": long}}},
+	}
+	got := UniqueSlug(existing, long)
+	if got == long || !ValidSlug(got) {
+		t.Fatalf("collision %s", got)
+	}
 }
 
 func TestPublicModelID(t *testing.T) {
 	if got := PublicModelID("openrouter", "gpt-4o"); got != "openrouter/gpt-4o" {
 		t.Fatalf("got %s", got)
 	}
-	if got := PublicModelID("openrouter", "openrouter/gpt-4o"); got != "openrouter/gpt-4o" {
+	if got := PublicModelID("openrouter", "openrouter/auto"); got != "openrouter/openrouter/auto" {
+		t.Fatalf("got %s", got)
+	}
+	if got := StripSlug("openrouter", "openrouter/openrouter/auto"); got != "openrouter/auto" {
 		t.Fatalf("got %s", got)
 	}
 	if got := StripSlug("openrouter", "openrouter/gpt-4o"); got != "gpt-4o" {

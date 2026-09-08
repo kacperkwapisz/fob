@@ -42,10 +42,7 @@ func (e *Executor) ModelsFor(ctx context.Context, credential domain.Credential) 
 	if slug == "" || base == "" {
 		return nil
 	}
-	key := credential.ID
-	if key == "" {
-		key = slug + "|" + base
-	}
+	key := credential.ID + "|" + slug + "|" + base
 	e.mu.Lock()
 	if hit, ok := e.cache[key]; ok && time.Now().Before(hit.until) {
 		models := hit.models
@@ -87,9 +84,6 @@ func (e *Executor) Execute(ctx context.Context, credential domain.Credential, bo
 	if opts.Stream {
 		rec["stream"] = true
 		headers["Accept"] = "text/event-stream"
-		if rec["stream_options"] == nil {
-			rec["stream_options"] = map[string]any{"include_usage": true}
-		}
 	} else {
 		rec["stream"] = false
 	}
@@ -123,6 +117,14 @@ func fetchModels(ctx context.Context, credential domain.Credential) ([]domain.Mo
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return nil, fmt.Errorf("models %d", res.StatusCode)
+	}
+	if body == nil {
+		return nil, fmt.Errorf("models response is empty")
+	}
+	switch body.(type) {
+	case map[string]any, []any:
+	default:
+		return nil, fmt.Errorf("models response is not JSON")
 	}
 	return parseModelList(slug, body), nil
 }
@@ -194,7 +196,10 @@ func wrap(res *http.Response, stream bool) (provider.ExecuteResult, error) {
 	}
 	if stream {
 		ch := make(chan any, 16)
-		go provider.ParseSSE(res.Body, ch)
+		go func() {
+			defer res.Body.Close()
+			provider.ParseSSE(res.Body, ch)
+		}()
 		return provider.ExecuteResult{OK: true, Status: res.StatusCode, Stream: ch}, nil
 	}
 	defer res.Body.Close()
@@ -223,6 +228,9 @@ func Discover(ctx context.Context, baseURL, secret string) (label string, models
 	models, err = fetchModels(ctx, cred)
 	if err != nil {
 		return "", nil, fmt.Errorf("could not list models: %w", err)
+	}
+	if len(models) == 0 {
+		return "", nil, fmt.Errorf("upstream listed no models")
 	}
 	return SourceHost(domain.Credential{Tokens: domain.CredentialTokens{Extra: map[string]any{extraBaseURL: base}}}), models, nil
 }

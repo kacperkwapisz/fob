@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -27,7 +28,7 @@ func TestParseModelListPrefixesIDs(t *testing.T) {
 	if models[0].ID != "openrouter/gpt-4o" || models[0].Name != "GPT-4o" {
 		t.Fatalf("%+v", models[0])
 	}
-	if models[1].ID != "openrouter/claude-3.5" || models[1].OwnedBy != "anthropic" {
+	if models[1].ID != "openrouter/openrouter/claude-3.5" || models[1].OwnedBy != "anthropic" {
 		t.Fatalf("%+v", models[1])
 	}
 }
@@ -76,6 +77,16 @@ func TestExecuteStripsSlugAndPostsChat(t *testing.T) {
 	if strings.Contains(gotBody, "openrouter/gpt-4o") {
 		t.Fatalf("slug leaked %s", gotBody)
 	}
+	gotBody = ""
+	result, err = ex.Execute(context.Background(), cred, map[string]any{
+		"model": "openrouter/openrouter/auto", "messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	}, provider.ExecuteOptions{})
+	if err != nil || !result.OK {
+		t.Fatalf("%+v %v", result, err)
+	}
+	if !strings.Contains(gotBody, `"model":"openrouter/auto"`) {
+		t.Fatalf("nested id stripped too far %s", gotBody)
+	}
 }
 
 func TestModelsForCachesAndPrefixes(t *testing.T) {
@@ -114,5 +125,49 @@ func TestModelsForCachesAndPrefixes(t *testing.T) {
 func TestDiscoverRejectsBadURL(t *testing.T) {
 	if _, _, err := Discover(context.Background(), "not-a-url", "sk-test"); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestDiscoverRejectsEmptyModels(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer srv.Close()
+	restore := provider.SetJSONClientForTests(srv.Client())
+	defer restore()
+	if _, _, err := Discover(context.Background(), srv.URL, "sk-test"); err == nil {
+		t.Fatal("expected empty catalog error")
+	}
+}
+
+func TestModelsForCacheKeyIncludesSlugAndBase(t *testing.T) {
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []any{map[string]any{"id": fmt.Sprintf("m-%d", hits)}},
+		})
+	}))
+	defer srv.Close()
+	restore := provider.SetJSONClientForTests(srv.Client())
+	defer restore()
+	ex := NewExecutor()
+	cred := domain.Credential{
+		ID: "src2", Provider: domain.ProviderOpenAI, Label: "Local",
+		Tokens: domain.CredentialTokens{AccessToken: "k", Extra: map[string]any{"base_url": srv.URL, "slug": "local"}},
+	}
+	first := ex.ModelsFor(context.Background(), cred)
+	cred.Tokens.Extra["slug"] = "other"
+	second := ex.ModelsFor(context.Background(), cred)
+	if hits != 2 {
+		t.Fatalf("hits %d", hits)
+	}
+	if len(first) != 1 || first[0].ID != "local/m-1" {
+		t.Fatalf("%+v", first)
+	}
+	if len(second) != 1 || second[0].ID != "other/m-2" {
+		t.Fatalf("%+v", second)
 	}
 }

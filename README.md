@@ -26,7 +26,7 @@ Compose **requires** `JWT_SECRET`. Data lives on the `fob-data` volume at `/data
 
 ## OAuth
 
-Claude and Codex OAuth apps only allow their CLI callbacks (`http://localhost:54545/callback` and `http://localhost:1455/auth/callback`). While a login is in flight, Fob binds those ports. If the port is already taken (the real CLI), the panel keeps the paste-callback form — paste the whole failed address bar. Grok uses device-code. Cursor uses CLI deep-control poll (Login) or a dashboard API key (Paste key). OpenAI-compatible sources are unlimited: paste a base URL and key (OpenRouter, Groq, a local llama.cpp, anything that speaks `/v1`). Models list as `slug/id` so they never collide with a sub.
+Claude and Codex OAuth apps only allow their CLI callbacks (`http://localhost:54545/callback` and `http://localhost:1455/auth/callback`). While a login is in flight, Fob binds those ports. If the port is already taken (the real CLI), the panel keeps the paste-callback form — paste the whole failed address bar. Grok uses device-code. Cursor uses CLI deep-control poll (Login) or a dashboard API key (Paste key). OpenAI-compatible sources are unlimited: paste a base URL and optional key (OpenRouter, Groq, a local llama.cpp, anything that speaks `/v1`). Local servers can omit the key. Models list as `slug/id` so they never collide with a sub.
 
 ## Env
 

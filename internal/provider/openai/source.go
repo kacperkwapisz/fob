@@ -5,7 +5,6 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"unicode"
 
 	"github.com/kacperkwapisz/fob/internal/domain"
 )
@@ -51,7 +50,7 @@ func Slugify(label string) string {
 	lastDash := false
 	for _, r := range s {
 		switch {
-		case unicode.IsLetter(r) || unicode.IsDigit(r):
+		case r >= 'a' && r <= 'z' || r >= '0' && r <= '9':
 			b.WriteRune(r)
 			lastDash = false
 		case r == '-' || r == '_' || r == ' ' || r == '.':
@@ -62,20 +61,42 @@ func Slugify(label string) string {
 			lastDash = true
 		}
 	}
-	out := strings.Trim(b.String(), "-")
-	if out == "" {
-		return "openai"
+	return clipSlug(strings.Trim(b.String(), "-"))
+}
+
+func clipSlug(s string) string {
+	s = strings.Trim(s, "-")
+	if s == "" {
+		return "src"
 	}
-	if len(out) > 48 {
-		out = strings.Trim(out[:48], "-")
+	if len(s) > 48 {
+		s = strings.Trim(s[:48], "-")
 	}
-	if !unicode.IsLetter(rune(out[0])) {
-		out = "s-" + out
-		if len(out) > 48 {
-			out = strings.Trim(out[:48], "-")
+	if s == "" || s[0] < 'a' || s[0] > 'z' {
+		s = "s-" + strings.Trim(s, "-")
+		if len(s) > 48 {
+			s = strings.Trim(s[:48], "-")
 		}
 	}
-	return out
+	if !ValidSlug(s) {
+		return "src"
+	}
+	return s
+}
+
+func numberedSlug(base string, n int) string {
+	suffix := fmt.Sprintf("-%d", n)
+	if len(base)+len(suffix) > 48 {
+		cut := 48 - len(suffix)
+		if cut < 1 {
+			cut = 1
+		}
+		base = strings.Trim(base[:cut], "-")
+	}
+	if base == "" {
+		base = "s"
+	}
+	return clipSlug(base + suffix)
 }
 
 func ValidSlug(s string) bool {
@@ -95,7 +116,7 @@ func ReservedSlug(s string) bool {
 func UniqueSlug(existing []domain.Credential, want string) string {
 	want = Slugify(want)
 	if ReservedSlug(want) {
-		want = "src-" + want
+		want = clipSlug("src-" + want)
 	}
 	taken := map[string]bool{}
 	for _, c := range existing {
@@ -107,13 +128,17 @@ func UniqueSlug(existing []domain.Credential, want string) string {
 	if !taken[want] {
 		return want
 	}
-	for i := 2; i < 1000; i++ {
-		next := fmt.Sprintf("%s-%d", want, i)
+	base := want
+	for i := 2; i < 100000; i++ {
+		if i == 1000 {
+			base = "src"
+		}
+		next := numberedSlug(base, i)
 		if ValidSlug(next) && !taken[next] {
 			return next
 		}
 	}
-	return want
+	return numberedSlug("src", len(existing)+2)
 }
 
 func NormalizeBaseURL(raw string) (string, error) {
@@ -149,11 +174,7 @@ func PublicModelID(slug, id string) string {
 	if id == "" {
 		return slug
 	}
-	prefix := slug + "/"
-	if strings.HasPrefix(id, prefix) {
-		return id
-	}
-	return prefix + id
+	return slug + "/" + id
 }
 
 func StripSlug(slug, id string) string {

@@ -613,6 +613,13 @@ func TestAddOpenAISourceRejectsBadURL(t *testing.T) {
 	if res.Code != 200 || !strings.Contains(res.Body.String(), "Add OpenAI source") {
 		t.Fatalf("status %d %s", res.Code, res.Body.String())
 	}
+	creds, err := booted.Fob.Vault.List(domain.ProviderOpenAI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(creds) != 0 {
+		t.Fatalf("saved invalid source %+v", creds)
+	}
 }
 
 func TestAlpineJS(t *testing.T) {
