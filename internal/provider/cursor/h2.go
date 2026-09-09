@@ -29,7 +29,7 @@ type BridgeFactory func(accessToken, rpcPath, agentURL string, unary bool, clien
 var (
 	bridgeMu          sync.Mutex
 	bridgeFactory     BridgeFactory = defaultHTTP2Bridge
-	serverIdleTimeout               = 30 * time.Second
+	serverIdleTimeout               = 2 * time.Minute
 )
 
 func SetBridgeFactoryForTests(f BridgeFactory) {

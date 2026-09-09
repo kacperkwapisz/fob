@@ -20,7 +20,7 @@ import (
 
 func TestHTTP2IdleTimeoutIgnoresClientWrites(t *testing.T) {
 	old := serverIdleTimeout
-	serverIdleTimeout = 150 * time.Millisecond
+	serverIdleTimeout = 80 * time.Millisecond
 	defer func() { serverIdleTimeout = old }()
 
 	cert, err := selfSignedCert()

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/kacperkwapisz/fob/internal/app"
 	"github.com/kacperkwapisz/fob/internal/httpx"
+	"github.com/kacperkwapisz/fob/internal/proxy"
 )
 
 var version = "dev"
@@ -55,6 +57,13 @@ func main() {
 		t := time.NewTicker(6 * time.Hour)
 		for range t.C {
 			_, _ = booted.Fob.Usage.Purge()
+		}
+	}()
+	go func() {
+		_, _ = proxy.KeepaliveCredentials(context.Background(), booted.Fob)
+		t := time.NewTicker(15 * time.Minute)
+		for range t.C {
+			_, _ = proxy.KeepaliveCredentials(context.Background(), booted.Fob)
 		}
 	}()
 	addr := net.JoinHostPort(booted.Env.Host, strconv.Itoa(booted.Env.Port))

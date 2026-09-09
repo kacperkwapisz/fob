@@ -399,6 +399,55 @@ func nearExpiry(c domain.Credential) bool {
 	return c.ExpiresAt != nil && *c.ExpiresAt-time.Now().UnixMilli() < 5*60*1000
 }
 
+const keepaliveSkewMS = 5 * 60 * 1000
+
+func KeepaliveCredentials(ctx context.Context, fob *Fob) (int, error) {
+	if fob == nil || fob.Vault == nil {
+		return 0, nil
+	}
+	creds, err := fob.Vault.List()
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, cred := range creds {
+		if !nearExpiry(cred) {
+			continue
+		}
+		ex := fob.Executors[cred.Provider]
+		if ex == nil {
+			continue
+		}
+		refreshed, err := ex.Refresh(ctx, cred)
+		if err != nil {
+			continue
+		}
+		if !credentialAdvanced(cred, refreshed) {
+			continue
+		}
+		if _, err := fob.Vault.Save(store.SaveCredential{
+			ID: cred.ID, Provider: cred.Provider, Label: cred.Label, Tokens: refreshed.Tokens, ExpiresAt: refreshed.ExpiresAt,
+		}); err != nil {
+			continue
+		}
+		n++
+	}
+	return n, nil
+}
+
+func credentialAdvanced(before, after domain.Credential) bool {
+	if after.Tokens.AccessToken != "" && after.Tokens.AccessToken != before.Tokens.AccessToken {
+		return true
+	}
+	if after.ExpiresAt == nil {
+		return false
+	}
+	if before.ExpiresAt == nil {
+		return true
+	}
+	return *after.ExpiresAt > *before.ExpiresAt+keepaliveSkewMS/2
+}
+
 func usageFrom(translated, upstream any) (pt, ct, cr, cw int64) {
 	t := asMap(translated)
 	u := asMap(upstream)

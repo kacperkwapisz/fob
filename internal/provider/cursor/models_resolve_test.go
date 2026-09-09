@@ -14,10 +14,10 @@ func TestResolveModelIDUsesCatalog(t *testing.T) {
 func TestResolveRequestedModelFromSnapshot(t *testing.T) {
 	sel := resolveRequestedModel("claude-opus-5", "medium")
 	if sel == nil {
-		return
+		t.Fatal("nil")
 	}
-	if sel.ModelID == "" {
-		t.Fatal("empty model id")
+	if sel.ModelID != "claude-opus-5" {
+		t.Fatalf("model id %q", sel.ModelID)
 	}
 }
 

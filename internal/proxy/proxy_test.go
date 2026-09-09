@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/kacperkwapisz/fob/internal/db"
 	"github.com/kacperkwapisz/fob/internal/domain"
@@ -13,10 +14,11 @@ import (
 )
 
 type fakeExec struct {
-	id     domain.ProviderID
-	format domain.ExecutorFormat
-	models []domain.ModelInfo
-	fn     func(domain.Credential) provider.ExecuteResult
+	id      domain.ProviderID
+	format  domain.ExecutorFormat
+	models  []domain.ModelInfo
+	fn      func(domain.Credential) provider.ExecuteResult
+	refresh func(domain.Credential) (domain.Credential, error)
 }
 
 func (f fakeExec) ID() domain.ProviderID         { return f.id }
@@ -26,6 +28,9 @@ func (f fakeExec) Execute(_ context.Context, c domain.Credential, _ any, _ provi
 	return f.fn(c), nil
 }
 func (f fakeExec) Refresh(_ context.Context, c domain.Credential) (domain.Credential, error) {
+	if f.refresh != nil {
+		return f.refresh(c)
+	}
 	return c, nil
 }
 
@@ -249,6 +254,100 @@ func TestListModelsSkipsCursorWhenNativeOwnsID(t *testing.T) {
 	}
 	if count != 1 || owner != "claude" {
 		t.Fatalf("count %d owner %s", count, owner)
+	}
+}
+
+func TestCursorStreamMetersOkOnStop(t *testing.T) {
+	ch := make(chan any, 4)
+	go func() {
+		defer close(ch)
+		ch <- map[string]any{
+			"id": "chatcmpl_1", "object": "chat.completion.chunk", "model": "gpt-5.6-terra-medium",
+			"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"content": "hi"}, "finish_reason": nil}},
+		}
+		ch <- map[string]any{
+			"id": "chatcmpl_1", "object": "chat.completion.chunk", "model": "gpt-5.6-terra-medium",
+			"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}},
+			"usage":   map[string]any{"prompt_tokens": 10.0, "completion_tokens": 2.0},
+		}
+	}()
+	fob, d := testFob(t, map[domain.ProviderID]provider.Executor{
+		domain.ProviderCursor: fakeExec{
+			id: domain.ProviderCursor, format: domain.FormatCursor,
+			models: []domain.ModelInfo{{ID: "gpt-5.6-terra-medium", Object: "model", OwnedBy: "cursor"}},
+			fn: func(domain.Credential) provider.ExecuteResult {
+				return provider.ExecuteResult{OK: true, Status: 200, Stream: ch}
+			},
+		},
+	})
+	defer d.Close()
+	_, _ = fob.Vault.Save(store.SaveCredential{ID: "c1", Provider: domain.ProviderCursor, Label: "Cursor", Tokens: domain.CredentialTokens{AccessToken: "t", Extra: map[string]any{"kind": "oauth"}}})
+	created, err := fob.Keys.Create("t", nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _ := fob.Keys.Verify(created.Secret)
+	result, err := Proxy(context.Background(), fob, Request{
+		Inbound: domain.InboundOpenAIChat,
+		Body:    map[string]any{"model": "gpt-5.6-terra-medium", "messages": []any{map[string]any{"role": "user", "content": "hi"}}},
+		Key:     *key,
+		Stream:  true,
+	})
+	if err != nil || !result.OK || result.Stream == nil {
+		t.Fatalf("%+v %v", result, err)
+	}
+	for range result.Stream {
+	}
+	today, err := fob.Usage.Since(24 * 60 * 60 * 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if today.Requests != 1 || today.Errors != 0 || today.PromptTokens != 10 || today.CompletionTokens != 2 {
+		t.Fatalf("meter %+v", today)
+	}
+}
+
+func TestKeepaliveRefreshesExpiredCredentialWithoutTraffic(t *testing.T) {
+	refreshed := 0
+	fob, d := testFob(t, map[domain.ProviderID]provider.Executor{
+		domain.ProviderGrok: fakeExec{
+			id: domain.ProviderGrok, format: domain.FormatGrok,
+			models: []domain.ModelInfo{{ID: "grok-4.6", Object: "model", OwnedBy: "grok"}},
+			fn: func(domain.Credential) provider.ExecuteResult {
+				return provider.ExecuteResult{OK: false, Status: 500}
+			},
+			refresh: func(c domain.Credential) (domain.Credential, error) {
+				refreshed++
+				exp := time.Now().UnixMilli() + 6*60*60*1000
+				c.Tokens.AccessToken = "new"
+				c.ExpiresAt = &exp
+				return c, nil
+			},
+		},
+	})
+	defer d.Close()
+	expired := time.Now().UnixMilli() - 60*1000
+	_, _ = fob.Vault.Save(store.SaveCredential{
+		ID: "g1", Provider: domain.ProviderGrok, Label: "Grok",
+		Tokens:    domain.CredentialTokens{AccessToken: "old", RefreshToken: "r", Extra: map[string]any{}},
+		ExpiresAt: &expired,
+	})
+	n, err := KeepaliveCredentials(context.Background(), fob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 || refreshed != 1 {
+		t.Fatalf("n=%d refreshed=%d", n, refreshed)
+	}
+	got, err := fob.Vault.Get("g1")
+	if err != nil || got == nil {
+		t.Fatal(err)
+	}
+	if got.Tokens.AccessToken != "new" {
+		t.Fatalf("token %q", got.Tokens.AccessToken)
+	}
+	if got.ExpiresAt == nil || *got.ExpiresAt <= time.Now().UnixMilli() {
+		t.Fatalf("expires %+v", got.ExpiresAt)
 	}
 }
 

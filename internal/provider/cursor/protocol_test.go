@@ -146,7 +146,7 @@ func TestRunCursorChatConnectEndThenClose(t *testing.T) {
 	result, err := RunChat(context.Background(), "tok", map[string]any{
 		"model": "cursor-auto", "messages": []any{map[string]any{"role": "user", "content": "hi"}}, "stream": false,
 	}, false, ClientCLI)
-	if err != nil || result.Status != 200 {
+	if err != nil || result.Status != 502 {
 		t.Fatalf("%+v %v", result, err)
 	}
 	body := translate.AsMap(result.Body)

@@ -104,9 +104,22 @@ func resolveModelID(model, effort string, fast ...bool) string {
 	if len(fast) > 0 {
 		wantFast = fast[0]
 	}
-	if variants := lookupVariants(base); variants != nil {
-		for _, key := range effortKeys(effort) {
-			if pick := pickVariant(variants[key], wantFast); pick != "" {
+	family := publicFamilyID(base)
+	if family == "" {
+		family = base
+	}
+	if effort == "" {
+		effort = effortFromID(base)
+	}
+	wantThinking := strings.Contains(base, "-thinking")
+	variants := lookupVariants(family)
+	if variants != nil {
+		keys := effortKeys(effort)
+		if effort == "" {
+			keys = []string{""}
+		}
+		for _, key := range keys {
+			if pick := pickVariantMatching(variants[key], wantFast, wantThinking); pick != "" {
 				return pick
 			}
 		}
@@ -115,7 +128,7 @@ func resolveModelID(model, effort string, fast ...bool) string {
 	if effort != "" {
 		var last string
 		for _, key := range effortKeys(effort) {
-			candidate := base + "-" + key
+			candidate := family + "-" + key
 			last = candidate
 			if wantFast {
 				if hit := firstKnown(known, candidate+"-fast", candidate); hit != "" {
@@ -159,6 +172,16 @@ func pickVariant(pair variantPair, wantFast bool) string {
 		return pair.standard
 	}
 	return pair.fast
+}
+
+func pickVariantMatching(pair variantPair, wantFast, wantThinking bool) string {
+	candidates := []string{pickVariant(pair, wantFast), pair.standard, pair.fast}
+	for _, id := range candidates {
+		if id != "" && strings.Contains(id, "-thinking") == wantThinking {
+			return id
+		}
+	}
+	return ""
 }
 
 func firstKnown(known []string, ids ...string) string {
@@ -205,13 +228,24 @@ func resolveRequestedModel(model, effort string, fast ...bool) *requestedModelSe
 	if len(fast) > 0 {
 		wantFast = fast[0]
 	}
-	variants := lookupVariants(base)
+	family := publicFamilyID(base)
+	if family == "" {
+		family = base
+	}
+	if effort == "" {
+		effort = effortFromID(base)
+	}
+	variants := lookupVariants(family)
 	if variants == nil {
 		return nil
 	}
 	var pair variantPair
 	matched := effort
-	for _, key := range effortKeys(effort) {
+	keys := effortKeys(effort)
+	if effort == "" {
+		keys = []string{"", "medium"}
+	}
+	for _, key := range keys {
 		pair = variants[key]
 		if pair.standard != "" || pair.fast != "" {
 			matched = key
@@ -231,7 +265,7 @@ func resolveRequestedModel(model, effort string, fast ...bool) *requestedModelSe
 		return nil
 	}
 	var params []struct{ ID, Value string }
-	paramBase := base
+	paramBase := family
 	if strings.HasSuffix(paramBase, "-thinking") {
 		paramBase = strings.TrimSuffix(paramBase, "-thinking")
 		params = append(params, struct{ ID, Value string }{"thinking", "true"})
@@ -808,7 +842,11 @@ func collectNonStream(id string, created int64, model string, chunks []map[strin
 		msg["tool_calls"] = toolCalls
 		msg["content"] = nil
 	}
-	return ChatResult{Status: 200, Body: map[string]any{
+	status := 200
+	if finish == "error" {
+		status = 502
+	}
+	return ChatResult{Status: status, Body: map[string]any{
 		"id": id, "object": "chat.completion", "created": created, "model": model,
 		"choices": []any{map[string]any{"index": 0, "message": msg, "finish_reason": finish}},
 		"usage":   computeUsage(state),

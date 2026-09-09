@@ -352,12 +352,17 @@ func indexVariants(models []Model) {
 }
 
 func lookupVariants(base string) map[string]variantPair {
-	if v, ok := variantIndex[base]; ok {
-		return v
+	seen := map[string]bool{}
+	for _, key := range []string{base, publicFamilyID(base), strings.TrimSuffix(strings.TrimSuffix(base, "-fast"), "-thinking")} {
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		if v, ok := variantIndex[key]; ok {
+			return v
+		}
 	}
-	trimmed := strings.TrimSuffix(base, "-fast")
-	trimmed = strings.TrimSuffix(trimmed, "-thinking")
-	return variantIndex[trimmed]
+	return nil
 }
 
 func RegisterModelVariants(models []Model) {

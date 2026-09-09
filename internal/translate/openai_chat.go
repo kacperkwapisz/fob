@@ -348,15 +348,22 @@ func claudeStreamToOpenaiChat(model string, _ any, chunk any, state *StreamState
 func grokStreamToOpenaiChat(model string, _ any, chunk any, state *StreamState) []string {
 	c := AsMap(chunk)
 	captureUsage(state, c["usage"])
-	if c["choices"] != nil {
-		out := cloneMap(c)
-		out["model"] = model
-		if AsStr(c["id"]) == "" {
-			out["id"] = state.ID
-		}
-		return []string{chunkLine(out)}
+	if c["choices"] == nil {
+		return nil
 	}
-	return nil
+	out := cloneMap(c)
+	out["model"] = model
+	if AsStr(c["id"]) == "" {
+		out["id"] = state.ID
+	}
+	lines := []string{chunkLine(out)}
+	choice := AsMap(first(AsArr(c["choices"])))
+	fr := AsStr(choice["finish_reason"])
+	if fr != "" && fr != "error" && !state.Finished {
+		state.Finished = true
+		lines = append(lines, "data: [DONE]")
+	}
+	return lines
 }
 
 func captureUsage(state *StreamState, raw any) {

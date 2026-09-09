@@ -348,6 +348,34 @@ func TestFlattenCodexMultiAgentStripsCollabEncryption(t *testing.T) {
 	}
 }
 
+func TestCursorStreamMarksFinishedOnStop(t *testing.T) {
+	state := EmptyStreamState()
+	TranslateStream(domain.InboundOpenAIChat, domain.FormatCursor, "gpt-5.6-terra-medium", map[string]any{}, map[string]any{
+		"id": "chatcmpl_1", "object": "chat.completion.chunk", "model": "gpt-5.6-terra-medium",
+		"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"content": "hi"}, "finish_reason": nil}},
+	}, &state)
+	if state.Finished {
+		t.Fatal("delta must not finish")
+	}
+	done := TranslateStream(domain.InboundOpenAIChat, domain.FormatCursor, "gpt-5.6-terra-medium", map[string]any{}, map[string]any{
+		"id": "chatcmpl_1", "object": "chat.completion.chunk", "model": "gpt-5.6-terra-medium",
+		"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}},
+		"usage":   map[string]any{"prompt_tokens": 12.0, "completion_tokens": 3.0, "routed_model": "gpt-5.6-terra-medium"},
+	}, &state)
+	if !state.Finished {
+		t.Fatalf("expected finished, got lines %v", done)
+	}
+	if !contains(done, "data: [DONE]") {
+		t.Fatalf("missing DONE: %v", done)
+	}
+	if state.PromptTokens != 12 || state.CompletionTokens != 3 {
+		t.Fatalf("usage %+v", state)
+	}
+	if state.RoutedModel != "gpt-5.6-terra-medium" {
+		t.Fatalf("routed %q", state.RoutedModel)
+	}
+}
+
 func golden(t *testing.T, name string) string {
 	t.Helper()
 	_, file, _, _ := runtime.Caller(0)
