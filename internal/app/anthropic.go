@@ -12,12 +12,12 @@ func registerAnthropic(mux *httpx.Mux, fob *proxy.Fob) {
 	mux.Handle(http.MethodPost, "/v1/messages", func(w http.ResponseWriter, r *http.Request) {
 		key := requireLocalKey(r, fob)
 		if key == nil {
-			httpx.ClaudeUnauthorized(w)
+			writeUnauthorized(w, r, string(domain.InboundClaudeMessages))
 			return
 		}
 		body, err := httpx.ParseBody(r)
 		if err != nil {
-			httpx.JSON(w, 400, map[string]any{"error": map[string]any{"type": "invalid_request_error", "message": err.Error()}})
+			writeParseError(w, r, string(domain.InboundClaudeMessages), err)
 			return
 		}
 		payload, _ := body.(map[string]any)
@@ -29,7 +29,7 @@ func registerAnthropic(mux *httpx.Mux, fob *proxy.Fob) {
 			Stream: payload["stream"] == true, InboundHeaders: httpx.InboundHeaders(r),
 		})
 		if err != nil {
-			httpx.JSON(w, 500, map[string]any{"error": map[string]any{"type": "server_error", "message": err.Error()}})
+			writeProxyErr(w, r, string(domain.InboundClaudeMessages), err)
 			return
 		}
 		writeProxy(w, r, result)
@@ -37,12 +37,12 @@ func registerAnthropic(mux *httpx.Mux, fob *proxy.Fob) {
 	mux.Handle(http.MethodPost, "/v1/messages/count_tokens", func(w http.ResponseWriter, r *http.Request) {
 		key := requireLocalKey(r, fob)
 		if key == nil {
-			httpx.ClaudeUnauthorized(w)
+			writeUnauthorized(w, r, string(domain.InboundClaudeMessages))
 			return
 		}
 		body, err := httpx.ParseBody(r)
 		if err != nil {
-			httpx.JSON(w, 400, map[string]any{"error": map[string]any{"type": "invalid_request_error", "message": err.Error()}})
+			writeParseError(w, r, string(domain.InboundClaudeMessages), err)
 			return
 		}
 		payload, _ := body.(map[string]any)
@@ -54,7 +54,7 @@ func registerAnthropic(mux *httpx.Mux, fob *proxy.Fob) {
 			CountTokens: true, InboundHeaders: httpx.InboundHeaders(r),
 		})
 		if err != nil {
-			httpx.JSON(w, 500, map[string]any{"error": map[string]any{"type": "server_error", "message": err.Error()}})
+			writeProxyErr(w, r, string(domain.InboundClaudeMessages), err)
 			return
 		}
 		writeProxy(w, r, result)

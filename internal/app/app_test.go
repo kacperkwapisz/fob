@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kacperkwapisz/fob/internal/domain"
+	"github.com/kacperkwapisz/fob/internal/httpx"
 	"github.com/kacperkwapisz/fob/internal/provider"
 	"github.com/kacperkwapisz/fob/internal/proxy"
 	"github.com/kacperkwapisz/fob/internal/store"
@@ -142,6 +144,62 @@ func TestModelsUnauthorized(t *testing.T) {
 	booted.Handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/v1/models", nil))
 	if res.Code != 401 {
 		t.Fatalf("status %d", res.Code)
+	}
+}
+
+func TestChatUnauthorizedLogsAndKeepsShape(t *testing.T) {
+	var buf bytes.Buffer
+	defer httpx.SetLogOutput(&buf)()
+	httpx.SetLogLevel("info")
+	booted, err := Create(map[string]string{"JWT_SECRET": secret, "DATABASE_PATH": ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer booted.DB.Close()
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"grok-4.6"}`))
+	req.Header.Set("content-type", "application/json")
+	booted.Handler.ServeHTTP(res, req)
+	if res.Code != 401 {
+		t.Fatalf("status %d %s", res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), `"type":"invalid_request_error"`) || !strings.Contains(res.Body.String(), "invalid api key") {
+		t.Fatalf("%s", res.Body.String())
+	}
+	if !strings.Contains(buf.String(), "fob error") || !strings.Contains(buf.String(), "/v1/chat/completions") {
+		t.Fatalf("log %q", buf.String())
+	}
+}
+
+func TestChatNoCredentialHumanJSON(t *testing.T) {
+	var buf bytes.Buffer
+	defer httpx.SetLogOutput(&buf)()
+	httpx.SetLogLevel("info")
+	booted, err := Create(map[string]string{"JWT_SECRET": secret, "DATABASE_PATH": ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer booted.DB.Close()
+	created, err := booted.Fob.Keys.Create("t", nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"grok-4.6","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("authorization", "Bearer "+created.Secret)
+	booted.Handler.ServeHTTP(res, req)
+	if res.Code != 503 {
+		t.Fatalf("status %d %s", res.Code, res.Body.String())
+	}
+	if strings.Contains(res.Body.String(), "<html") {
+		t.Fatalf("dump %s", res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), "no grok credential") || !strings.Contains(res.Body.String(), "panel") {
+		t.Fatalf("%s", res.Body.String())
+	}
+	if !strings.Contains(buf.String(), "grok/grok-4.6") {
+		t.Fatalf("log %q", buf.String())
 	}
 }
 

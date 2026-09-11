@@ -59,6 +59,7 @@ func Create(source map[string]string) (*Booted, error) {
 			domain.ProviderCursor: &cursorexec.Executor{},
 		},
 	}
+	httpx.SetLogLevel(string(e.LogLevel))
 	logins := oauth.Logins(e)
 	mux := httpx.NewMux()
 	registerHealth(mux)

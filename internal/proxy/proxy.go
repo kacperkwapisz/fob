@@ -54,11 +54,11 @@ func Proxy(ctx context.Context, fob *Fob, req Request) (Result, error) {
 	started := time.Now().UnixMilli()
 	model := requestedModel(req.Body)
 	if model == "" {
-		return Result{OK: false, Status: 400, Body: httpx.OpenAIError("invalid_request_error", "model is required")}, nil
+		return failOut(req, 400, httpx.KindRequest, "", "", "model is required", `set "model" in the request body`), nil
 	}
 	chain := resolveProviderChain(fob, model)
 	if len(chain) == 0 {
-		return Result{OK: false, Status: 404, Body: httpx.OpenAIError("invalid_request_error", "unknown model: "+model)}, nil
+		return failOut(req, 404, httpx.KindModel, "", model, "unknown model: "+model, "GET /v1/models for ids this instance can serve"), nil
 	}
 	if req.Key.DailyCap != nil {
 		used, err := fob.Usage.TodayTokensForKey(req.Key.ID)
@@ -66,22 +66,26 @@ func Proxy(ctx context.Context, fob *Fob, req Request) (Result, error) {
 			return Result{}, err
 		}
 		if used >= *req.Key.DailyCap {
-			return Result{OK: false, Status: 429, Body: httpx.OpenAIError("rate_limit_exceeded", "daily token cap reached")}, nil
+			return failOut(req, 429, httpx.KindCap, "", model, "daily token cap reached", "wait until UTC midnight, or raise the key's cap in the panel"), nil
 		}
 	}
 
-	var lastStatus int
-	var lastBody any
+	var last provider.ExecuteResult
+	var lastHop hop
 	attempted := false
 	firstByte := false
+	route := string(req.Inbound)
 
 	for hopIndex, hop := range chain {
 		if err := fob.Keys.Allows(req.Key, hop.Provider, hop.Model); err != nil {
-			lastStatus, lastBody = 403, httpx.OpenAIError("permission_denied", err.Error())
+			last = provider.ExecuteResult{OK: false, Status: 403, Message: err.Error()}
+			lastHop = hop
 			continue
 		}
 		executor := fob.Executors[hop.Provider]
 		if executor == nil {
+			last = provider.ExecuteResult{OK: false, Status: 503, Message: "provider " + string(hop.Provider) + " is not available"}
+			lastHop = hop
 			continue
 		}
 		inboundBody := req.Body
@@ -94,7 +98,8 @@ func Proxy(ctx context.Context, fob *Fob, req Request) (Result, error) {
 			return Result{}, err
 		}
 		if len(creds) == 0 {
-			lastStatus, lastBody = 503, httpx.OpenAIError("server_error", "no "+string(hop.Provider)+" credential is connected")
+			last = provider.ExecuteResult{OK: false, Status: 503, Message: "no " + string(hop.Provider) + " credential is connected"}
+			lastHop = hop
 			continue
 		}
 		attempted = true
@@ -105,6 +110,8 @@ func Proxy(ctx context.Context, fob *Fob, req Request) (Result, error) {
 					_, _ = fob.Vault.Save(store.SaveCredential{
 						ID: cred.ID, Provider: cred.Provider, Label: cred.Label, Tokens: cred.Tokens, ExpiresAt: cred.ExpiresAt,
 					})
+				} else {
+					logRefresh(hop.Provider, cred.Label, route, err)
 				}
 			}
 			result, err := executor.Execute(ctx, cred, translated.Body, provider.ExecuteOptions{
@@ -112,7 +119,7 @@ func Proxy(ctx context.Context, fob *Fob, req Request) (Result, error) {
 				InboundHeaders: req.InboundHeaders, CallerKey: req.Key.ID,
 			})
 			if err != nil {
-				return Result{}, err
+				result = provider.FailFromErr(err)
 			}
 			if !result.OK && result.Status == 401 {
 				if refreshed, err := executor.Refresh(ctx, cred); err == nil {
@@ -125,12 +132,14 @@ func Proxy(ctx context.Context, fob *Fob, req Request) (Result, error) {
 						InboundHeaders: req.InboundHeaders, CallerKey: req.Key.ID,
 					})
 					if err != nil {
-						return Result{}, err
+						result = provider.FailFromErr(err)
 					}
+				} else {
+					logRefresh(hop.Provider, cred.Label, route, err)
 				}
 			}
 			if !result.OK {
-				lastStatus, lastBody = result.Status, result.Body
+				last, lastHop = result, hop
 				moreCreds := result.Retryable && i < len(creds)-1 && !firstByte
 				moreHops := result.Retryable && hopIndex < len(chain)-1 && !firstByte
 				if moreCreds {
@@ -140,7 +149,7 @@ func Proxy(ctx context.Context, fob *Fob, req Request) (Result, error) {
 					break
 				}
 				record(fob, req, hop.Provider, hop.Model, started, "error", 0, 0, 0, 0, "")
-				return Result{OK: false, Status: result.Status, Body: result.Body}, nil
+				return failFromExec(req, hop.Provider, hop.Model, result), nil
 			}
 			sticky.Store(req.Key.ID, cred.ID)
 			if req.Stream && result.Stream != nil {
@@ -168,6 +177,14 @@ func Proxy(ctx context.Context, fob *Fob, req Request) (Result, error) {
 					status := "ok"
 					if !state.Finished {
 						status = "error"
+						httpx.Fail{
+							Kind: httpx.KindUpstream, Status: 502,
+							Provider: string(hop.Provider), Model: hop.Model, Route: route,
+							Message: "stream ended before the provider finished",
+							Hint:    "retry the request",
+						}.Log()
+					} else {
+						httpx.LogOK(string(hop.Provider), hop.Model, route)
 					}
 					record(fob, req, hop.Provider, hop.Model, started, status, state.PromptTokens, state.CompletionTokens, state.CacheRead, state.CacheWrite, state.RoutedModel)
 				}()
@@ -175,24 +192,29 @@ func Proxy(ctx context.Context, fob *Fob, req Request) (Result, error) {
 			}
 			body := translate.TranslateResponse(req.Inbound, executor.Format(), hop.Model, req.Body, result.Body)
 			pt, ct, cr, cw := usageFrom(body, result.Body)
+			httpx.LogOK(string(hop.Provider), hop.Model, route)
 			record(fob, req, hop.Provider, hop.Model, started, "ok", pt, ct, cr, cw, routedModel(body, result.Body))
 			return Result{OK: true, Status: 200, Body: body}, nil
 		}
 	}
-	record(fob, req, chain[0].Provider, chain[0].Model, started, "error", 0, 0, 0, 0, "")
-	status := lastStatus
-	if status == 0 {
+	if lastHop.Provider == "" {
+		lastHop = chain[0]
+	}
+	if last.Status == 0 {
 		if attempted {
-			status = 502
+			last.Status = 502
+			if last.Message == "" {
+				last.Message = "all credentials failed"
+			}
 		} else {
-			status = 503
+			last.Status = 503
+			if last.Message == "" {
+				last.Message = "all credentials failed"
+			}
 		}
 	}
-	body := lastBody
-	if body == nil {
-		body = httpx.OpenAIError("server_error", "all credentials failed")
-	}
-	return Result{OK: false, Status: status, Body: body}, nil
+	record(fob, req, lastHop.Provider, lastHop.Model, started, "error", 0, 0, 0, 0, "")
+	return failFromExec(req, lastHop.Provider, lastHop.Model, last), nil
 }
 
 func ListModels(fob *Fob) []domain.ModelInfo {
@@ -420,6 +442,7 @@ func KeepaliveCredentials(ctx context.Context, fob *Fob) (int, error) {
 		}
 		refreshed, err := ex.Refresh(ctx, cred)
 		if err != nil {
+			logRefresh(cred.Provider, cred.Label, "keepalive", err)
 			continue
 		}
 		if !credentialAdvanced(cred, refreshed) {
@@ -428,6 +451,10 @@ func KeepaliveCredentials(ctx context.Context, fob *Fob) (int, error) {
 		if _, err := fob.Vault.Save(store.SaveCredential{
 			ID: cred.ID, Provider: cred.Provider, Label: cred.Label, Tokens: refreshed.Tokens, ExpiresAt: refreshed.ExpiresAt,
 		}); err != nil {
+			httpx.Fail{
+				Kind: httpx.KindInternal, Provider: string(cred.Provider), Model: cred.Label,
+				Route: "keepalive", Message: "could not save refreshed credential",
+			}.Log()
 			continue
 		}
 		n++
