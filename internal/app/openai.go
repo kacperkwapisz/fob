@@ -13,7 +13,7 @@ func registerOpenAI(mux *httpx.Mux, fob *proxy.Fob) {
 	mux.Handle(http.MethodGet, "/v1/models", func(w http.ResponseWriter, r *http.Request) {
 		key := requireLocalKey(r, fob)
 		if key == nil {
-			httpx.OpenAIUnauthorized(w)
+			writeUnauthorized(w, r, string(domain.InboundOpenAIChat))
 			return
 		}
 		httpx.JSON(w, http.StatusOK, map[string]any{"object": "list", "data": proxy.ListModels(fob)})
@@ -21,12 +21,12 @@ func registerOpenAI(mux *httpx.Mux, fob *proxy.Fob) {
 	mux.Handle(http.MethodPost, "/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		key := requireLocalKey(r, fob)
 		if key == nil {
-			httpx.OpenAIUnauthorized(w)
+			writeUnauthorized(w, r, string(domain.InboundOpenAIChat))
 			return
 		}
 		body, err := httpx.ParseBody(r)
 		if err != nil {
-			httpx.JSON(w, 400, httpx.OpenAIError("invalid_request_error", err.Error()))
+			writeParseError(w, r, string(domain.InboundOpenAIChat), err)
 			return
 		}
 		payload, _ := body.(map[string]any)
@@ -38,7 +38,7 @@ func registerOpenAI(mux *httpx.Mux, fob *proxy.Fob) {
 			Stream: payload["stream"] == true, InboundHeaders: httpx.InboundHeaders(r),
 		})
 		if err != nil {
-			httpx.JSON(w, 500, httpx.OpenAIError("server_error", err.Error()))
+			writeProxyErr(w, r, string(domain.InboundOpenAIChat), err)
 			return
 		}
 		writeProxy(w, r, result)
@@ -52,16 +52,4 @@ func requireLocalKey(r *http.Request, fob *proxy.Fob) *domain.LocalKey {
 	}
 	key, _ := fob.Keys.Verify(secret)
 	return key
-}
-
-func writeProxy(w http.ResponseWriter, r *http.Request, result proxy.Result) {
-	if !result.OK {
-		httpx.JSON(w, result.Status, result.Body)
-		return
-	}
-	if result.Stream != nil {
-		httpx.StreamSSE(w, r, result.Stream)
-		return
-	}
-	httpx.JSON(w, http.StatusOK, result.Body)
 }

@@ -12,12 +12,12 @@ func registerResponses(mux *httpx.Mux, fob *proxy.Fob) {
 	mux.Handle(http.MethodPost, "/v1/responses", func(w http.ResponseWriter, r *http.Request) {
 		key := requireLocalKey(r, fob)
 		if key == nil {
-			httpx.OpenAIUnauthorized(w)
+			writeUnauthorized(w, r, string(domain.InboundOpenAIResponses))
 			return
 		}
 		body, err := httpx.ParseBody(r)
 		if err != nil {
-			httpx.JSON(w, 400, httpx.OpenAIError("invalid_request_error", err.Error()))
+			writeParseError(w, r, string(domain.InboundOpenAIResponses), err)
 			return
 		}
 		payload, _ := body.(map[string]any)
@@ -29,7 +29,7 @@ func registerResponses(mux *httpx.Mux, fob *proxy.Fob) {
 			Stream: payload["stream"] == true, InboundHeaders: httpx.InboundHeaders(r),
 		})
 		if err != nil {
-			httpx.JSON(w, 500, httpx.OpenAIError("server_error", err.Error()))
+			writeProxyErr(w, r, string(domain.InboundOpenAIResponses), err)
 			return
 		}
 		writeProxy(w, r, result)
@@ -37,12 +37,12 @@ func registerResponses(mux *httpx.Mux, fob *proxy.Fob) {
 	mux.Handle(http.MethodPost, "/v1/responses/compact", func(w http.ResponseWriter, r *http.Request) {
 		key := requireLocalKey(r, fob)
 		if key == nil {
-			httpx.OpenAIUnauthorized(w)
+			writeUnauthorized(w, r, string(domain.InboundOpenAIResponses))
 			return
 		}
 		body, err := httpx.ParseBody(r)
 		if err != nil {
-			httpx.JSON(w, 400, httpx.OpenAIError("invalid_request_error", err.Error()))
+			writeParseError(w, r, string(domain.InboundOpenAIResponses), err)
 			return
 		}
 		payload, _ := body.(map[string]any)
@@ -50,7 +50,12 @@ func registerResponses(mux *httpx.Mux, fob *proxy.Fob) {
 			payload = map[string]any{}
 		}
 		if payload["stream"] == true {
-			httpx.JSON(w, 400, httpx.OpenAIError("invalid_request_error", "Streaming not supported for compact responses"))
+			f := httpx.Fail{
+				Kind: httpx.KindRequest, Status: 400, Type: "invalid_request_error",
+				Route: r.URL.Path, Message: "Streaming not supported for compact responses",
+			}
+			f.Log()
+			httpx.JSON(w, 400, f.ClientBody(string(domain.InboundOpenAIResponses)))
 			return
 		}
 		delete(payload, "stream")
@@ -59,7 +64,7 @@ func registerResponses(mux *httpx.Mux, fob *proxy.Fob) {
 			Compact: true, InboundHeaders: httpx.InboundHeaders(r),
 		})
 		if err != nil {
-			httpx.JSON(w, 500, httpx.OpenAIError("server_error", err.Error()))
+			writeProxyErr(w, r, string(domain.InboundOpenAIResponses), err)
 			return
 		}
 		writeProxy(w, r, result)

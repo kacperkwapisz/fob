@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/kacperkwapisz/fob/internal/domain"
+	"github.com/kacperkwapisz/fob/internal/httpx"
 	"github.com/kacperkwapisz/fob/internal/oauth"
 	"github.com/kacperkwapisz/fob/internal/provider"
 	"github.com/kacperkwapisz/fob/internal/translate"
@@ -50,25 +51,28 @@ func (e *Executor) Execute(ctx context.Context, credential domain.Credential, bo
 	for _, client := range clients {
 		access, err := accessToken(ctx, credential, client)
 		if err != nil {
-			last = provider.ExecuteResult{OK: false, Status: 502, Retryable: true, Body: map[string]any{"error": map[string]any{"message": err.Error(), "type": "server_error"}}, Message: err.Error()}
+			last = provider.FailFromErr(err)
 			continue
 		}
 		result, err := RunChat(ctx, access, rec, opts.Stream, client)
 		if err != nil {
-			msg := err.Error()
-			status := 502
-			if contains401(msg) {
-				status = 401
+			last = provider.FailFromErr(err)
+			if contains401(err.Error()) {
+				last.Status = 401
+				last.Retryable = true
 			}
-			last = provider.ExecuteResult{OK: false, Status: status, Retryable: true, Body: map[string]any{"error": map[string]any{"message": msg, "type": "server_error"}}, Message: msg}
 			continue
 		}
 		if result.Status == 401 {
-			last = provider.ExecuteResult{OK: false, Status: 401, Retryable: true, Body: result.Body, Message: "cursor unauthorized"}
+			last = provider.ExecuteResult{OK: false, Status: 401, Retryable: true, Message: "Cursor rejected the credential"}
 			continue
 		}
 		if result.Status >= 400 {
-			return provider.ExecuteResult{OK: false, Status: result.Status, Retryable: provider.IsRetryableStatus(result.Status), Body: result.Body, Message: result.Message}, nil
+			msg := httpx.CleanMessage(result.Message)
+			if extracted := httpx.ExtractErrorMessage(result.Body); extracted != "" {
+				msg = extracted
+			}
+			return provider.ExecuteResult{OK: false, Status: result.Status, Retryable: provider.IsRetryableStatus(result.Status), Message: msg}, nil
 		}
 		go e.refreshModels(access)
 		if opts.Stream && result.Stream != nil {

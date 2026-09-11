@@ -37,7 +37,7 @@ Claude and Codex OAuth apps only allow their CLI callbacks (`http://localhost:54
 | `DATABASE_PATH` | binary: `$FOB_HOME/fob.sqlite`; image: `/data/fob.sqlite` | SQLite |
 | `HOST` | `0.0.0.0` | Bind |
 | `PORT` | `8317` | Listen |
-| `LOG_LEVEL` | `info` | |
+| `LOG_LEVEL` | `info` | Failures always log one line to stderr. `debug` also logs successful hops. |
 | `CLAUDE_CLIENT_ID` / `CODEX_CLIENT_ID` / `GROK_CLIENT_ID` | embedded CLI clients | Override |
 
 Cursor effort and fast variants (`-high`, `-medium`, `-fast`, …) collapse to one listed id (`claude-opus-5`, `composer-2.5`). Thinking stays a sibling (`claude-opus-5-thinking`). Pick effort with `reasoning_effort` and fast with `fast: true` or a `-fast` suffix. Ids that already appear on a connected Claude/Codex/Grok catalog are omitted; force Cursor with a `cursor/` prefix (`cursor/claude-opus-5`). Unprefixed `claude-opus-5` still hits Anthropic first and failovers to Cursor on retryable errors. Optional panel toggle maps Grok ↔ Cursor Grok.

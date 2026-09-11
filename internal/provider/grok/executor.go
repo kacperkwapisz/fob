@@ -52,7 +52,7 @@ func (e Executor) Execute(ctx context.Context, credential domain.Credential, bod
 	}
 	res, err := provider.PostJSON(ctx, api+"/responses", sanitized, headers)
 	if err != nil {
-		return provider.ExecuteResult{}, err
+		return provider.FailFromErr(err), nil
 	}
 	return wrap(res, opts.Stream)
 }
@@ -120,13 +120,7 @@ func tokenEndpoint(ctx context.Context) (string, error) {
 
 func wrap(res *http.Response, stream bool) (provider.ExecuteResult, error) {
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		defer res.Body.Close()
-		raw, _ := io.ReadAll(res.Body)
-		var body any
-		if json.Unmarshal(raw, &body) != nil {
-			body = map[string]any{"error": string(raw)}
-		}
-		return provider.ExecuteResult{OK: false, Status: res.StatusCode, Retryable: provider.IsRetryableStatus(res.StatusCode), Body: body, Message: fmt.Sprintf("upstream %d", res.StatusCode)}, nil
+		return provider.FailFromResponse(res), nil
 	}
 	if stream {
 		ch := make(chan any, 16)

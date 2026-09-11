@@ -34,7 +34,7 @@ func (e Executor) Execute(ctx context.Context, credential domain.Credential, bod
 	}
 	res, err := provider.PostJSON(ctx, api+path, prepared.Body, prepared.Headers)
 	if err != nil {
-		return provider.ExecuteResult{}, err
+		return provider.FailFromErr(err), nil
 	}
 	return wrap(res, opts.Stream && !opts.CountTokens, prepared.Reverse)
 }
@@ -75,9 +75,7 @@ func (e Executor) Refresh(ctx context.Context, credential domain.Credential) (do
 
 func wrap(res *http.Response, stream bool, reverse map[string]string) (provider.ExecuteResult, error) {
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		defer res.Body.Close()
-		body := safeJSON(res)
-		return provider.ExecuteResult{OK: false, Status: res.StatusCode, Retryable: provider.IsRetryableStatus(res.StatusCode), Body: body, Message: errMsg(body, res.StatusCode)}, nil
+		return provider.FailFromResponse(res), nil
 	}
 	if stream {
 		ch := make(chan any, 16)
@@ -102,24 +100,4 @@ func wrap(res *http.Response, stream bool, reverse map[string]string) (provider.
 		body = RestoreClaudeToolNames(body, reverse)
 	}
 	return provider.ExecuteResult{OK: true, Status: res.StatusCode, Body: body}, nil
-}
-
-func safeJSON(res *http.Response) any {
-	raw, _ := io.ReadAll(res.Body)
-	var v any
-	if json.Unmarshal(raw, &v) != nil {
-		return map[string]any{"error": string(raw)}
-	}
-	return v
-}
-
-func errMsg(body any, status int) string {
-	err := translate.AsMap(translate.AsMap(body)["error"])
-	if s := translate.AsStr(err["message"]); s != "" {
-		return s
-	}
-	if s := translate.AsStr(translate.AsMap(body)["message"]); s != "" {
-		return s
-	}
-	return fmt.Sprintf("upstream %d", status)
 }
