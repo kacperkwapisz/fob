@@ -376,6 +376,20 @@ func TestCursorStreamMarksFinishedOnStop(t *testing.T) {
 	}
 }
 
+func TestCursorStreamCapturesErrorReason(t *testing.T) {
+	state := EmptyStreamState()
+	TranslateStream(domain.InboundOpenAIChat, domain.FormatCursor, "gpt-5.6-terra-medium", map[string]any{}, map[string]any{
+		"id": "chatcmpl_1", "object": "chat.completion.chunk", "model": "gpt-5.6-terra-medium",
+		"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"content": "Cursor went silent waiting for the next token"}, "finish_reason": "error"}},
+	}, &state)
+	if state.Finished {
+		t.Fatal("error must not finish")
+	}
+	if state.Error != "Cursor went silent waiting for the next token" {
+		t.Fatalf("error %q", state.Error)
+	}
+}
+
 func golden(t *testing.T, name string) string {
 	t.Helper()
 	_, file, _, _ := runtime.Caller(0)

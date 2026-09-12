@@ -175,14 +175,9 @@ func Proxy(ctx context.Context, fob *Fob, req Request) (Result, error) {
 						out <- done + "\n\n"
 					}
 					status := "ok"
-					if !state.Finished {
+					if state.Error != "" || !state.Finished {
 						status = "error"
-						httpx.Fail{
-							Kind: httpx.KindUpstream, Status: 502,
-							Provider: string(hop.Provider), Model: hop.Model, Route: route,
-							Message: "stream ended before the provider finished",
-							Hint:    "retry the request",
-						}.Log()
+						logIncompleteStream(string(hop.Provider), hop.Model, route, state.Error)
 					} else {
 						httpx.LogOK(string(hop.Provider), hop.Model, route)
 					}

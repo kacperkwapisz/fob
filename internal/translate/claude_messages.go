@@ -338,6 +338,7 @@ func grokStreamToClaude(model string, _ any, chunk any, state *StreamState) []st
 		lines = append(lines, sse("content_block_delta", map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]any{"type": "text_delta", "text": s}}))
 	}
 	if choice["finish_reason"] != nil {
+		captureStreamError(state, choice)
 		stop := "end_turn"
 		if AsStr(choice["finish_reason"]) == "tool_calls" {
 			stop = "tool_use"
@@ -345,7 +346,9 @@ func grokStreamToClaude(model string, _ any, chunk any, state *StreamState) []st
 		lines = append(lines, sse("content_block_stop", map[string]any{"type": "content_block_stop", "index": 0}))
 		lines = append(lines, sse("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": stop}, "usage": map[string]any{"output_tokens": 0}}))
 		lines = append(lines, sse("message_stop", map[string]any{"type": "message_stop"}))
-		state.Finished = true
+		if AsStr(choice["finish_reason"]) != "error" {
+			state.Finished = true
+		}
 	}
 	return lines
 }

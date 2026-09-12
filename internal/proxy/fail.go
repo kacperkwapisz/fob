@@ -51,6 +51,26 @@ func failFromExec(req Request, providerID domain.ProviderID, model string, resul
 	return Result{OK: false, Status: status, Body: f.ClientBody(inbound)}
 }
 
+func logIncompleteStream(providerID, model, route, extracted string) {
+	kind := httpx.KindUpstream
+	message := "stream ended before the provider finished"
+	hint := "retry the request"
+	if extracted != "" {
+		k, _, m, h := httpx.Humanize(502, providerID, extracted)
+		kind, message, hint = k, m, h
+	}
+	low := strings.ToLower(extracted)
+	if strings.Contains(low, "silent") || strings.Contains(low, "idle") {
+		kind = httpx.KindTimeout
+		hint = "retry; thinking models can stay silent for minutes"
+	}
+	httpx.Fail{
+		Kind: kind, Status: 502,
+		Provider: providerID, Model: model, Route: route,
+		Message: message, Hint: hint,
+	}.Log()
+}
+
 func logRefresh(providerID domain.ProviderID, label, route string, err error) {
 	msg := "credential refresh failed"
 	if err != nil {

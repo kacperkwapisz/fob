@@ -104,6 +104,57 @@ func TestRunCursorChatScripted(t *testing.T) {
 	_ = translate.AsMap
 }
 
+func TestRunCursorChatIdleClose(t *testing.T) {
+	t.Setenv("CURSOR_AGENT_URL", "https://agentn.test.cursor.sh")
+	SetBridgeFactoryForTests(func(_, _, _ string, _ bool, _ ClientKind) *Bridge {
+		var onData func([]byte)
+		var onClose func(int)
+		alive := true
+		return &Bridge{
+			Write: func(frame []byte) {
+				if len(frame) < 5 {
+					return
+				}
+				var msg agentpb.AgentClientMessage
+				if err := proto.Unmarshal(frame[5:], &msg); err == nil && msg.GetRunRequest() != nil && onData != nil {
+					go func() {
+						onData(frameConnect(mustMarshal(&agentpb.AgentServerMessage{
+							Message: &agentpb.AgentServerMessage_InteractionUpdate{
+								InteractionUpdate: &agentpb.InteractionUpdate{
+									Message: &agentpb.InteractionUpdate_ThinkingDelta{ThinkingDelta: &agentpb.ThinkingDeltaUpdate{Text: "hmm"}},
+								},
+							},
+						}), 0))
+						if onClose != nil {
+							onClose(closeIdle)
+						}
+					}()
+				}
+			},
+			End:     func() { alive = false },
+			OnData:  func(cb func([]byte)) { onData = cb },
+			OnClose: func(cb func(int)) { onClose = cb },
+			Alive:   func() bool { return alive },
+		}
+	})
+	defer SetBridgeFactoryForTests(nil)
+	defer CleanupAllSessionState()
+
+	result, err := RunChat(context.Background(), "tok", map[string]any{
+		"model": "gpt-5.6-terra-medium", "messages": []any{map[string]any{"role": "user", "content": "hi"}}, "stream": true,
+	}, true, ClientCLI)
+	if err != nil || result.Stream == nil {
+		t.Fatalf("%+v %v", result, err)
+	}
+	joined := ""
+	for ev := range result.Stream {
+		joined += marshalJSON(ev)
+	}
+	if !containsStr(joined, "went silent") || !containsStr(joined, "error") {
+		t.Fatalf("%s", joined)
+	}
+}
+
 func TestRunCursorChatConnectEndThenClose(t *testing.T) {
 	t.Setenv("CURSOR_AGENT_URL", "https://agentn.test.cursor.sh")
 	SetBridgeFactoryForTests(func(_, _, _ string, _ bool, _ ClientKind) *Bridge {

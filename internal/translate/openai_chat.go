@@ -358,12 +358,26 @@ func grokStreamToOpenaiChat(model string, _ any, chunk any, state *StreamState) 
 	}
 	lines := []string{chunkLine(out)}
 	choice := AsMap(first(AsArr(c["choices"])))
+	captureStreamError(state, choice)
 	fr := AsStr(choice["finish_reason"])
 	if fr != "" && fr != "error" && !state.Finished {
 		state.Finished = true
 		lines = append(lines, "data: [DONE]")
 	}
 	return lines
+}
+
+func captureStreamError(state *StreamState, choice map[string]any) {
+	if state == nil || AsStr(choice["finish_reason"]) != "error" {
+		return
+	}
+	if msg := AsStr(AsMap(choice["delta"])["content"]); msg != "" {
+		state.Error = msg
+		return
+	}
+	if state.Error == "" {
+		state.Error = "provider stream error"
+	}
 }
 
 func captureUsage(state *StreamState, raw any) {

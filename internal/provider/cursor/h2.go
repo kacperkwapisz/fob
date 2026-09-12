@@ -26,10 +26,16 @@ type Bridge struct {
 
 type BridgeFactory func(accessToken, rpcPath, agentURL string, unary bool, client ClientKind) *Bridge
 
+const (
+	closeEOF  = 0
+	closeErr  = 1
+	closeIdle = 2
+)
+
 var (
 	bridgeMu          sync.Mutex
 	bridgeFactory     BridgeFactory = defaultHTTP2Bridge
-	serverIdleTimeout               = 2 * time.Minute
+	serverIdleTimeout               = 10 * time.Minute
 )
 
 func SetBridgeFactoryForTests(f BridgeFactory) {
@@ -122,12 +128,12 @@ func defaultHTTP2Bridge(accessToken, rpcPath, agentURL string, unary bool, clien
 	go func() {
 		res, err := cc.RoundTrip(req)
 		if err != nil {
-			deliverClose(1)
+			deliverClose(closeErr)
 			return
 		}
 		defer res.Body.Close()
 		if res.StatusCode < 200 || res.StatusCode >= 300 {
-			deliverClose(1)
+			deliverClose(closeErr)
 			return
 		}
 		idle := time.NewTimer(serverIdleTimeout)
@@ -145,15 +151,15 @@ func defaultHTTP2Bridge(accessToken, rpcPath, agentURL string, unary bool, clien
 			}()
 			select {
 			case <-idle.C:
-				deliverClose(1)
+				deliverClose(closeIdle)
 				_ = conn.Close()
 				return
 			case r := <-ch:
 				if r.err != nil {
 					if r.err == io.EOF {
-						deliverClose(0)
+						deliverClose(closeEOF)
 					} else {
-						deliverClose(1)
+						deliverClose(closeErr)
 					}
 					return
 				}
@@ -196,7 +202,7 @@ func defaultHTTP2Bridge(accessToken, rpcPath, agentURL string, unary bool, clien
 			a := alive
 			mu.Unlock()
 			if !a {
-				go cb(1)
+				go cb(closeErr)
 			}
 		},
 		Alive: func() bool {
@@ -212,7 +218,7 @@ func deadBridge() *Bridge {
 		Write:   func([]byte) {},
 		End:     func() {},
 		OnData:  func(func([]byte)) {},
-		OnClose: func(cb func(int)) { go cb(1) },
+		OnClose: func(cb func(int)) { go cb(closeErr) },
 		Alive:   func() bool { return false },
 	}
 }

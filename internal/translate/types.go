@@ -17,6 +17,7 @@ type StreamState struct {
 	ID               string
 	Started          bool
 	Finished         bool
+	Error            string
 	ToolIndex        int
 	PromptTokens     int64
 	CompletionTokens int64

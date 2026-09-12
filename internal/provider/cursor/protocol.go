@@ -599,11 +599,8 @@ func runStream(ctx context.Context, accessToken string, payload requestPayload, 
 			emitAssistant(c)
 		}
 		joiner.Flush()
-		if !state.turnEnded || (code != 0 && !state.terminalCheckpoint) {
-			msg := "Cursor stream ended before turnEnded"
-			if state.turnEnded {
-				msg = "Cursor stream ended after turnEnded without a terminal checkpoint"
-			}
+		if !state.turnEnded || (code != closeEOF && !state.terminalCheckpoint) {
+			msg := closeMessage(code, state.turnEnded)
 			emit(map[string]any{"content": msg}, "error")
 		} else {
 			emit(map[string]any{}, "stop")
@@ -760,9 +757,11 @@ func resumeTools(ctx context.Context, active *activeBridge, parsed ParsedMessage
 			)
 		}, func([]byte) { finish() })
 	})
-	active.bridge.OnClose(func(int) {
+	active.bridge.OnClose(func(code int) {
 		if state.turnEnded {
 			emit(map[string]any{}, "stop")
+		} else {
+			emit(map[string]any{"content": closeMessage(code, false)}, "error")
 		}
 		finish()
 	})
@@ -876,6 +875,19 @@ func randHex(n int) string {
 func marshalJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+func closeMessage(code int, turnEnded bool) string {
+	switch {
+	case turnEnded:
+		return "Cursor stream ended after turnEnded without a terminal checkpoint"
+	case code == closeIdle:
+		return "Cursor went silent waiting for the next token"
+	case code != closeEOF:
+		return "Cursor closed the stream before the turn finished"
+	default:
+		return "Cursor stream ended before turnEnded"
+	}
 }
 
 var _ = provider.IsRetryableStatus

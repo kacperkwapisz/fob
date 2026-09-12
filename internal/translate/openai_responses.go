@@ -249,8 +249,15 @@ func grokStreamToResponses(model string, _ any, chunk any, state *StreamState) [
 		lines = append(lines, sse("response.output_text.delta", map[string]any{"type": "response.output_text.delta", "delta": s}))
 	}
 	if choice["finish_reason"] != nil {
-		lines = append(lines, sse("response.completed", map[string]any{"type": "response.completed", "response": map[string]any{"id": state.ID, "object": "response", "model": model, "status": "completed", "output": []any{}}}))
-		state.Finished = true
+		captureStreamError(state, choice)
+		status := "completed"
+		if AsStr(choice["finish_reason"]) == "error" {
+			status = "failed"
+		}
+		lines = append(lines, sse("response.completed", map[string]any{"type": "response.completed", "response": map[string]any{"id": state.ID, "object": "response", "model": model, "status": status, "output": []any{}}}))
+		if AsStr(choice["finish_reason"]) != "error" {
+			state.Finished = true
+		}
 	}
 	return lines
 }

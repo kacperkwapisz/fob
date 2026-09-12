@@ -55,8 +55,10 @@ func TestHTTP2IdleTimeoutIgnoresClientWrites(t *testing.T) {
 	addr := ln.Addr().String()
 	bridge := defaultHTTP2Bridge("tok", "/agent.v1.AgentService/Run", "https://"+addr, false, ClientCLI)
 	var closed atomic.Bool
+	var code atomic.Int32
 	done := make(chan struct{})
-	bridge.OnClose(func(int) {
+	bridge.OnClose(func(c int) {
+		code.Store(int32(c))
 		if closed.CompareAndSwap(false, true) {
 			close(done)
 		}
@@ -80,6 +82,9 @@ func TestHTTP2IdleTimeoutIgnoresClientWrites(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Fatalf("timeout too slow: %s", elapsed)
+	}
+	if got := int(code.Load()); got != closeIdle {
+		t.Fatalf("close code %d want %d", got, closeIdle)
 	}
 }
 

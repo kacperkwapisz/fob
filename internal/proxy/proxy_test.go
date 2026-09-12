@@ -310,6 +310,61 @@ func TestCursorStreamMetersOkOnStop(t *testing.T) {
 	}
 }
 
+func TestCursorStreamLogsProviderError(t *testing.T) {
+	var buf bytes.Buffer
+	defer httpx.SetLogOutput(&buf)()
+	httpx.SetLogLevel("info")
+	ch := make(chan any, 2)
+	go func() {
+		defer close(ch)
+		ch <- map[string]any{
+			"id": "chatcmpl_1", "object": "chat.completion.chunk", "model": "gpt-5.6-terra-medium",
+			"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"content": "hi"}, "finish_reason": nil}},
+		}
+		ch <- map[string]any{
+			"id": "chatcmpl_1", "object": "chat.completion.chunk", "model": "gpt-5.6-terra-medium",
+			"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"content": "Cursor went silent waiting for the next token"}, "finish_reason": "error"}},
+		}
+	}()
+	fob, d := testFob(t, map[domain.ProviderID]provider.Executor{
+		domain.ProviderCursor: fakeExec{
+			id: domain.ProviderCursor, format: domain.FormatCursor,
+			models: []domain.ModelInfo{{ID: "gpt-5.6-terra-medium", Object: "model", OwnedBy: "cursor"}},
+			fn: func(domain.Credential) provider.ExecuteResult {
+				return provider.ExecuteResult{OK: true, Status: 200, Stream: ch}
+			},
+		},
+	})
+	defer d.Close()
+	_, _ = fob.Vault.Save(store.SaveCredential{ID: "c1", Provider: domain.ProviderCursor, Label: "Cursor", Tokens: domain.CredentialTokens{AccessToken: "t", Extra: map[string]any{"kind": "oauth"}}})
+	created, err := fob.Keys.Create("t", nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _ := fob.Keys.Verify(created.Secret)
+	result, err := Proxy(context.Background(), fob, Request{
+		Inbound: domain.InboundOpenAIChat,
+		Body:    map[string]any{"model": "gpt-5.6-terra-medium", "messages": []any{map[string]any{"role": "user", "content": "hi"}}},
+		Key:     *key,
+		Stream:  true,
+	})
+	if err != nil || !result.OK || result.Stream == nil {
+		t.Fatalf("%+v %v", result, err)
+	}
+	for range result.Stream {
+	}
+	log := buf.String()
+	if !strings.Contains(log, "fob error  502  cursor/gpt-5.6-terra-medium") {
+		t.Fatalf("log %q", log)
+	}
+	if !strings.Contains(log, "Cursor went silent waiting for the next token") {
+		t.Fatalf("missing close reason %q", log)
+	}
+	if strings.Contains(log, "stream ended before the provider finished") {
+		t.Fatalf("generic unfinished leaked %q", log)
+	}
+}
+
 func TestKeepaliveRefreshesExpiredCredentialWithoutTraffic(t *testing.T) {
 	refreshed := 0
 	fob, d := testFob(t, map[domain.ProviderID]provider.Executor{
