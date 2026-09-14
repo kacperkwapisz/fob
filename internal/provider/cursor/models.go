@@ -29,6 +29,9 @@ func PublicID(wireID string) string {
 	if wireID == "auto" || wireID == "default" {
 		return "cursor-auto"
 	}
+	if isGrokID(wireID) && !strings.HasPrefix(wireID, "cursor-") {
+		return "cursor-" + wireID
+	}
 	return wireID
 }
 
@@ -36,9 +39,27 @@ func WireID(public string) string {
 	switch public {
 	case "cursor-auto", "auto", "default":
 		return "default"
-	default:
-		return public
 	}
+	if strings.HasPrefix(public, "cursor-grok-") {
+		return strings.TrimPrefix(public, "cursor-")
+	}
+	return public
+}
+
+func grokBare(id string) string {
+	return strings.TrimPrefix(id, "cursor-")
+}
+
+func isGrokID(id string) bool {
+	return strings.HasPrefix(grokBare(id), "grok-")
+}
+
+func grokIDForms(id string) []string {
+	if !isGrokID(id) {
+		return []string{id}
+	}
+	bare := grokBare(id)
+	return []string{id, bare, "cursor-" + bare}
 }
 
 func StripPublicPrefix(id string) string {
@@ -129,6 +150,18 @@ func variantListRank(m Model) int {
 }
 
 func RestoreWirePrefix(id string, known []string) string {
+	if isGrokID(id) {
+		if strings.HasPrefix(id, "cursor-") {
+			return id
+		}
+		prefixed := "cursor-" + grokBare(id)
+		for _, k := range known {
+			if k == prefixed {
+				return prefixed
+			}
+		}
+		return grokBare(id)
+	}
 	if strings.HasPrefix(id, "cursor-") || strings.HasPrefix(id, "composer-") {
 		return id
 	}
@@ -139,6 +172,21 @@ func RestoreWirePrefix(id string, known []string) string {
 		}
 	}
 	return id
+}
+
+func grokFamily(id string) string {
+	return stripEffort(grokBare(id))
+}
+
+func grokAliasKey(id string) string {
+	if !isGrokID(id) {
+		return ""
+	}
+	bare := grokBare(id)
+	if strings.HasPrefix(id, "cursor-") {
+		return bare
+	}
+	return "cursor-" + bare
 }
 
 func ExpandAvailableModels(body any) []Model {
@@ -306,19 +354,7 @@ func indexVariants(models []Model) {
 			if strings.HasSuffix(key, "-fast") {
 				key = strings.TrimSuffix(key, "-fast")
 			}
-			if variantIndex[key] == nil {
-				variantIndex[key] = map[string]variantPair{}
-			}
-			for effort, pair := range m.VariantIDs {
-				existing := variantIndex[key][effort]
-				if pair.standard != "" {
-					existing.standard = pair.standard
-				}
-				if pair.fast != "" {
-					existing.fast = pair.fast
-				}
-				variantIndex[key][effort] = existing
-			}
+			mergeVariantPairs(key, m.VariantIDs)
 			continue
 		}
 		base := m.ID
@@ -338,22 +374,41 @@ func indexVariants(models []Model) {
 			key = strings.TrimSuffix(strings.TrimSuffix(base, "-thinking"), "-"+effort)
 			key = strings.TrimSuffix(key, "-thinking")
 		}
-		if variantIndex[key] == nil {
-			variantIndex[key] = map[string]variantPair{}
-		}
-		pair := variantIndex[key][effort]
+		pair := variantPair{}
 		if fast {
 			pair.fast = m.ID
 		} else {
 			pair.standard = m.ID
 		}
-		variantIndex[key][effort] = pair
+		mergeVariantPairs(key, map[string]variantPair{effort: pair})
+	}
+}
+
+func mergeVariantPairs(key string, pairs map[string]variantPair) {
+	for _, dest := range grokIDForms(key) {
+		if variantIndex[dest] == nil {
+			variantIndex[dest] = map[string]variantPair{}
+		}
+		for effort, pair := range pairs {
+			existing := variantIndex[dest][effort]
+			if pair.standard != "" {
+				existing.standard = pair.standard
+			}
+			if pair.fast != "" {
+				existing.fast = pair.fast
+			}
+			variantIndex[dest][effort] = existing
+		}
 	}
 }
 
 func lookupVariants(base string) map[string]variantPair {
 	seen := map[string]bool{}
-	for _, key := range []string{base, publicFamilyID(base), strings.TrimSuffix(strings.TrimSuffix(base, "-fast"), "-thinking")} {
+	keys := []string{base, publicFamilyID(base), strings.TrimSuffix(strings.TrimSuffix(base, "-fast"), "-thinking")}
+	if alias := grokAliasKey(base); alias != "" {
+		keys = append(keys, alias, publicFamilyID(alias))
+	}
+	for _, key := range keys {
 		if key == "" || seen[key] {
 			continue
 		}
@@ -513,16 +568,12 @@ func MapNativeToWire(id string, known []string) string {
 			return restored
 		}
 	}
-	if strings.HasPrefix(id, "grok-4.6") || strings.HasPrefix(id, "grok-4.5") {
-		candidate := "cursor-grok-4.5-medium"
-		for _, k := range known {
-			if k == candidate {
-				return candidate
-			}
-		}
-		for _, k := range known {
-			if strings.HasPrefix(k, "cursor-grok-4.5") {
-				return k
+	if isGrokID(id) {
+		family := grokFamily(id)
+		thinking := strings.Contains(id, "-thinking")
+		for _, form := range grokIDForms(family) {
+			if hit := preferredWire(form, thinking, known); hit != "" {
+				return hit
 			}
 		}
 	}
@@ -580,11 +631,7 @@ func sameFamily(id, family string) bool {
 func MapWireToNative(id string) (domain.ProviderID, string, bool) {
 	stripped := strings.TrimPrefix(id, "cursor-")
 	if strings.HasPrefix(stripped, "grok-") || strings.HasPrefix(id, "cursor-grok-") {
-		model := "grok-4.5"
-		if strings.HasPrefix(stripped, "grok-") {
-			model = stripEffort(stripped)
-		}
-		return domain.ProviderGrok, model, true
+		return domain.ProviderGrok, stripEffort(stripped), true
 	}
 	if strings.HasPrefix(stripped, "claude-") {
 		return domain.ProviderClaude, stripEffort(stripped), true

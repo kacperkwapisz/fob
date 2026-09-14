@@ -222,12 +222,12 @@ func TestListModelsCollapsesCursorVariants(t *testing.T) {
 			t.Fatalf("duplicate id %s", m.ID)
 		}
 	}
-	for _, id := range []string{"grok-4.5", "claude-opus-5", "claude-opus-5-thinking", "composer-2.5", "cursor-grok-4.5"} {
+	for _, id := range []string{"grok-4.5", "claude-opus-5", "claude-opus-5-thinking", "composer-2.5", "cursor-grok-4.5", "cursor-grok-4.6"} {
 		if ids[id] != 1 {
 			t.Fatalf("missing %s", id)
 		}
 	}
-	for _, id := range []string{"claude-opus-5-medium", "claude-opus-5-high-fast", "composer-2.5-fast", "cursor-grok-4.5-medium"} {
+	for _, id := range []string{"claude-opus-5-medium", "claude-opus-5-high-fast", "composer-2.5-fast", "cursor-grok-4.5-medium", "grok-4.6"} {
 		if ids[id] != 0 {
 			t.Fatalf("variant listed %s", id)
 		}

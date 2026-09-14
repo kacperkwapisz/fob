@@ -679,6 +679,62 @@
 		"maxTokens": 64000
 	},
 	{
+		"id": "cursor-grok-4.6-high",
+		"name": "Cursor Grok 4.6",
+		"reasoning": false,
+		"contextWindow": 200000,
+		"maxTokens": 64000
+	},
+	{
+		"id": "cursor-grok-4.6-high-fast",
+		"name": "Cursor Grok 4.6 Fast",
+		"reasoning": false,
+		"contextWindow": 200000,
+		"maxTokens": 64000
+	},
+	{
+		"id": "cursor-grok-4.6-low",
+		"name": "Cursor Grok 4.6",
+		"reasoning": false,
+		"contextWindow": 200000,
+		"maxTokens": 64000
+	},
+	{
+		"id": "cursor-grok-4.6-low-fast",
+		"name": "Cursor Grok 4.6 Fast",
+		"reasoning": false,
+		"contextWindow": 200000,
+		"maxTokens": 64000
+	},
+	{
+		"id": "cursor-grok-4.6-medium",
+		"name": "Cursor Grok 4.6",
+		"reasoning": false,
+		"contextWindow": 200000,
+		"maxTokens": 64000
+	},
+	{
+		"id": "cursor-grok-4.6-medium-fast",
+		"name": "Cursor Grok 4.6 Fast",
+		"reasoning": false,
+		"contextWindow": 200000,
+		"maxTokens": 64000
+	},
+	{
+		"id": "cursor-grok-4.6-xhigh",
+		"name": "Cursor Grok 4.6",
+		"reasoning": false,
+		"contextWindow": 200000,
+		"maxTokens": 64000
+	},
+	{
+		"id": "cursor-grok-4.6-xhigh-fast",
+		"name": "Cursor Grok 4.6 Fast",
+		"reasoning": false,
+		"contextWindow": 200000,
+		"maxTokens": 64000
+	},
+	{
 		"id": "gemini-3-flash",
 		"name": "Gemini 3 Flash",
 		"reasoning": false,

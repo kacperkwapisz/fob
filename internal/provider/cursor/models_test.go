@@ -13,8 +13,17 @@ func TestPublicIDs(t *testing.T) {
 	if PublicID("auto") != "cursor-auto" {
 		t.Fatal("auto")
 	}
+	if PublicID("grok-4.6-medium") != "cursor-grok-4.6-medium" {
+		t.Fatal(PublicID("grok-4.6-medium"))
+	}
+	if PublicID("cursor-grok-4.5-medium") != "cursor-grok-4.5-medium" {
+		t.Fatal("keep cursor grok")
+	}
 	if WireID("cursor-auto") != "default" || WireID("auto") != "default" || WireID("composer-2.5") != "composer-2.5" {
 		t.Fatal("wire")
+	}
+	if WireID("cursor-grok-4.6") != "grok-4.6" || WireID("cursor-grok-4.6-medium") != "grok-4.6-medium" {
+		t.Fatal("wire grok")
 	}
 }
 
@@ -55,6 +64,30 @@ func TestRestoreGrokAlias(t *testing.T) {
 	known := KnownIDs()
 	if RestoreWirePrefix("grok-4.5-medium", known) != "cursor-grok-4.5-medium" {
 		t.Fatal(RestoreWirePrefix("grok-4.5-medium", known))
+	}
+	if RestoreWirePrefix("grok-4.6", known) != "grok-4.6" {
+		t.Fatal(RestoreWirePrefix("grok-4.6", known))
+	}
+	if RestoreWirePrefix("grok-4.6-medium", known) != "cursor-grok-4.6-medium" {
+		t.Fatal(RestoreWirePrefix("grok-4.6-medium", known))
+	}
+	if RestoreWirePrefix("cursor-grok-4.6", known) != "cursor-grok-4.6" {
+		t.Fatal(RestoreWirePrefix("cursor-grok-4.6", known))
+	}
+}
+
+func TestRestoreLiveGrokWithoutCursorPrefix(t *testing.T) {
+	prev := liveIDs
+	t.Cleanup(func() { liveIDs = prev })
+	liveIDs = []string{"grok-4.6-low", "grok-4.6-medium", "grok-4.6-high", "grok-4.6-xhigh", "grok-4.6-xhigh-fast"}
+	if RestoreWirePrefix("grok-4.6", liveIDs) != "grok-4.6" {
+		t.Fatal(RestoreWirePrefix("grok-4.6", liveIDs))
+	}
+	if RestoreWirePrefix("cursor-grok-4.6", liveIDs) != "cursor-grok-4.6" {
+		t.Fatal(RestoreWirePrefix("cursor-grok-4.6", liveIDs))
+	}
+	if got := MapNativeToWire("grok-4.6", liveIDs); got != "grok-4.6-medium" {
+		t.Fatalf("map %s", got)
 	}
 }
 
@@ -115,6 +148,8 @@ func TestPublicFamilyID(t *testing.T) {
 		"gemini-3.6-flash-minimal":            "gemini-3.6-flash",
 		"composer-2.5-fast":                   "composer-2.5",
 		"cursor-grok-4.5-medium-fast":         "cursor-grok-4.5",
+		"grok-4.6-xhigh-fast":                 "grok-4.6",
+		"cursor-grok-4.6-medium":              "cursor-grok-4.6",
 		"gpt-5.2":                             "gpt-5.2",
 		"auto":                                "auto",
 	}
@@ -133,7 +168,7 @@ func TestCollapseForListDropsEffortAndFast(t *testing.T) {
 	}
 	for _, id := range []string{
 		"claude-opus-4-7-high", "claude-opus-4-7-high-fast", "claude-opus-5-medium",
-		"composer-2.5-fast", "gpt-5.2-high", "cursor-grok-4.5-medium",
+		"composer-2.5-fast", "gpt-5.2-high", "cursor-grok-4.5-medium", "cursor-grok-4.6-xhigh",
 	} {
 		if _, ok := ids[id]; ok {
 			t.Fatalf("variant still listed %s", id)
@@ -141,7 +176,7 @@ func TestCollapseForListDropsEffortAndFast(t *testing.T) {
 	}
 	for _, id := range []string{
 		"claude-opus-4-7", "claude-opus-4-7-thinking", "claude-opus-5", "claude-opus-5-thinking",
-		"composer-2.5", "gpt-5.2", "gpt-5.4", "gpt-5.4-mini", "cursor-grok-4.5", "auto",
+		"composer-2.5", "gpt-5.2", "gpt-5.4", "gpt-5.4-mini", "cursor-grok-4.5", "cursor-grok-4.6", "auto",
 	} {
 		if _, ok := ids[id]; !ok {
 			t.Fatalf("missing family %s", id)
@@ -199,6 +234,32 @@ func TestCollapseForListDropsEffortAndFast(t *testing.T) {
 	}
 	if len(composer.Efforts) != 0 {
 		t.Fatalf("composer efforts %v", composer.Efforts)
+	}
+	grok46 := byID["cursor-grok-4.6"]
+	if grok46.ID == "" {
+		t.Fatal("missing cursor-grok-4.6")
+	}
+	if grok46.Name != "Cursor Grok 4.6" {
+		t.Fatalf("grok 4.6 name %q", grok46.Name)
+	}
+	if !equalStrings(grok46.Efforts, []string{"low", "medium", "high", "xhigh"}) {
+		t.Fatalf("grok 4.6 efforts %v", grok46.Efforts)
+	}
+}
+
+func TestLiveGrokListsAsCursorPrefixed(t *testing.T) {
+	listed := ToModelInfo([]Model{
+		{ID: "grok-4.6-low", Name: "Cursor Grok 4.6"},
+		{ID: "grok-4.6-medium", Name: "Cursor Grok 4.6"},
+		{ID: "grok-4.6-high", Name: "Cursor Grok 4.6"},
+		{ID: "grok-4.6-xhigh", Name: "Cursor Grok 4.6"},
+		{ID: "grok-4.6-xhigh-fast", Name: "Cursor Grok 4.6 (fast)"},
+	}, false)
+	if len(listed) != 1 || listed[0].ID != "cursor-grok-4.6" {
+		t.Fatalf("%+v", listed)
+	}
+	if listed[0].OwnedBy != "cursor" {
+		t.Fatalf("owned %s", listed[0].OwnedBy)
 	}
 }
 

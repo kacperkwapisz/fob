@@ -190,8 +190,10 @@ func firstKnown(known []string, ids ...string) string {
 		set[k] = true
 	}
 	for _, id := range ids {
-		if set[id] {
-			return id
+		for _, form := range grokIDForms(id) {
+			if set[form] {
+				return form
+			}
 		}
 	}
 	return ""
@@ -265,7 +267,13 @@ func resolveRequestedModel(model, effort string, fast ...bool) *requestedModelSe
 		return nil
 	}
 	var params []struct{ ID, Value string }
-	paramBase := family
+	paramBase := publicFamilyID(wire)
+	if paramBase == "" {
+		paramBase = family
+	}
+	if isGrokID(paramBase) {
+		paramBase = grokBare(paramBase)
+	}
 	if strings.HasSuffix(paramBase, "-thinking") {
 		paramBase = strings.TrimSuffix(paramBase, "-thinking")
 		params = append(params, struct{ ID, Value string }{"thinking", "true"})
