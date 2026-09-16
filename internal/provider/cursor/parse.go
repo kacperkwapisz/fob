@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"strconv"
 	"strings"
 
 	"github.com/kacperkwapisz/fob/internal/translate"
@@ -238,11 +237,4 @@ func DeriveConversationKey(messages []OpenAIMessage, sessionID string) string {
 		first = first[:200]
 	}
 	return hash16("conv:" + first)
-}
-
-func DeterministicConversationID(convKey string) string {
-	sum := sha256.Sum256([]byte("cursor-conv-id:" + convKey))
-	h := hex.EncodeToString(sum[:])[:32]
-	nibble, _ := strconv.ParseInt(string(h[16]), 16, 0)
-	return h[0:8] + "-" + h[8:12] + "-4" + h[13:16] + "-" + strconv.FormatInt(0x8|(nibble&0x3), 16) + h[17:20] + "-" + h[20:32]
 }

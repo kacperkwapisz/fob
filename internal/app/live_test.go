@@ -58,6 +58,27 @@ func TestLiveCursorAndGrok(t *testing.T) {
 		})
 		t.Run("cursor/grok-fast-stream", func(t *testing.T) { c.chat(t, "cursor-grok-4.6-fast", true) })
 		t.Run("cursor/prefixed-grok-fast", func(t *testing.T) { c.chat(t, "cursor/cursor-grok-4.6-fast", true) })
+		t.Run("cursor/prod-path-tools-retry", func(t *testing.T) {
+			body := map[string]any{
+				"model":  "cursor/cursor-grok-4.6-fast",
+				"stream": true,
+				"messages": []any{
+					map[string]any{"role": "user", "content": "Reply with the single word pong."},
+				},
+				"tools": []any{
+					map[string]any{
+						"type": "function",
+						"function": map[string]any{
+							"name":        "lookup",
+							"description": "Look something up",
+							"parameters":  map[string]any{"type": "object", "properties": map[string]any{"q": map[string]any{"type": "string"}}},
+						},
+					},
+				},
+			}
+			c.chatBody(t, body, true)
+			c.chatBody(t, body, true)
+		})
 		t.Run("cursor/terra-fast-stream", func(t *testing.T) {
 			if !c.ids["gpt-5.6-terra-fast"] {
 				t.Skip("gpt-5.6-terra-fast not listed")

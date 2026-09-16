@@ -104,6 +104,65 @@ func TestRunCursorChatScripted(t *testing.T) {
 	_ = translate.AsMap
 }
 
+func TestConnectErrorDropsConversationState(t *testing.T) {
+	t.Setenv("CURSOR_AGENT_URL", "https://agentn.test.cursor.sh")
+	var ids []string
+	SetBridgeFactoryForTests(func(_, _, _ string, _ bool, _ ClientKind) *Bridge {
+		var onData func([]byte)
+		var onClose func(int)
+		alive := true
+		return &Bridge{
+			Write: func(frame []byte) {
+				if len(frame) < 5 {
+					return
+				}
+				var msg agentpb.AgentClientMessage
+				if proto.Unmarshal(frame[5:], &msg) != nil {
+					return
+				}
+				if run := msg.GetRunRequest(); run != nil {
+					ids = append(ids, run.GetConversationId())
+					if onData != nil {
+						go func() {
+							onData(frameConnect([]byte(`{"error":{"code":"failed_precondition","message":"Error"}}`), connectEndStreamFlag))
+							if onClose != nil {
+								onClose(0)
+							}
+						}()
+					}
+				}
+			},
+			End:     func() { alive = false },
+			OnData:  func(cb func([]byte)) { onData = cb },
+			OnClose: func(cb func(int)) { onClose = cb },
+			Alive:   func() bool { return alive },
+		}
+	})
+	defer SetBridgeFactoryForTests(nil)
+	defer CleanupAllSessionState()
+
+	body := map[string]any{
+		"model":    "cursor-grok-4.6-fast",
+		"messages": []any{map[string]any{"role": "user", "content": "Reply with the single word pong."}},
+		"stream":   true,
+	}
+	first, err := RunChat(context.Background(), "tok", body, true, ClientCLI)
+	if err != nil || first.Stream == nil {
+		t.Fatalf("%+v %v", first, err)
+	}
+	for range first.Stream {
+	}
+	second, err := RunChat(context.Background(), "tok", body, true, ClientCLI)
+	if err != nil || second.Stream == nil {
+		t.Fatalf("%+v %v", second, err)
+	}
+	for range second.Stream {
+	}
+	if len(ids) != 2 || ids[0] == "" || ids[0] == ids[1] {
+		t.Fatalf("conversation ids %v", ids)
+	}
+}
+
 func TestRunCursorChatIdleClose(t *testing.T) {
 	t.Setenv("CURSOR_AGENT_URL", "https://agentn.test.cursor.sh")
 	SetBridgeFactoryForTests(func(_, _, _ string, _ bool, _ ClientKind) *Bridge {

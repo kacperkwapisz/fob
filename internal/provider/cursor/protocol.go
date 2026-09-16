@@ -59,6 +59,12 @@ func CleanupAllSessionState() {
 	conversationStates = map[string]*storedConversation{}
 }
 
+func dropConversation(convKey string) {
+	sessionMu.Lock()
+	defer sessionMu.Unlock()
+	delete(conversationStates, convKey)
+}
+
 func cleanupActive(a *activeBridge) {
 	if a == nil {
 		return
@@ -361,7 +367,7 @@ func RunChat(ctx context.Context, accessToken string, body map[string]any, strea
 	stored := conversationStates[convKey]
 	if stored == nil {
 		stored = &storedConversation{
-			conversationID: DeterministicConversationID(convKey),
+			conversationID: randomUUID(),
 			sessionScoped:  sessionID != "",
 			blobStore:      map[string][]byte{},
 			lastAccess:     time.Now(),
@@ -575,6 +581,7 @@ func runStream(ctx context.Context, accessToken string, payload requestPayload, 
 			)
 		}, func(end []byte) {
 			if err := parseConnectEnd(end); err != nil {
+				dropConversation(convKey)
 				emit(map[string]any{"content": err.Error()}, "error")
 				emitUsage()
 				finish()
@@ -627,6 +634,7 @@ func runStream(ctx context.Context, accessToken string, payload requestPayload, 
 		}
 		joiner.Flush()
 		if !state.turnEnded || (code != closeEOF && !state.terminalCheckpoint) {
+			dropConversation(convKey)
 			msg := closeMessage(code, state.turnEnded)
 			emit(map[string]any{"content": msg}, "error")
 		} else {
