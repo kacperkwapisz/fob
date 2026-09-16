@@ -282,7 +282,7 @@ func TestMintRedirectsWithoutSecret(t *testing.T) {
 	pageReq.Header.Set("cookie", session)
 	booted.Handler.ServeHTTP(pageRes, pageReq)
 	html := pageRes.Body.String()
-	for _, want := range []string{"opencode", "sk-fob-", "Logins", "Keys", "Meter", "Usage Trends", "Cursor"} {
+	for _, want := range []string{"opencode", "sk-fob-", "Logins", "Keys", "Meter", "Usage Trends", "Cursor", "OpenAI-compatible", "Add source"} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("missing %q", want)
 		}
@@ -405,7 +405,7 @@ func TestDesignCSS(t *testing.T) {
 		t.Fatal(res.Code)
 	}
 	css := res.Body.String()
-	if !strings.Contains(css, "--accent:") || !strings.Contains(css, "--font-display:") || !strings.Contains(css, "--dither-bayer:") || !strings.Contains(css, "card-trends") {
+	if !strings.Contains(css, "--accent:") || !strings.Contains(css, "--font-display:") || !strings.Contains(css, "--dither-bayer:") || !strings.Contains(css, "card-trends") || !strings.Contains(css, "source-form") || !strings.Contains(css, "--p-openai") {
 		t.Fatal(css[:200])
 	}
 }
@@ -419,7 +419,7 @@ func TestPanelJS(t *testing.T) {
 	res := httptest.NewRecorder()
 	booted.Handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/panel.js", nil))
 	js := res.Body.String()
-	if res.Code != 200 || !strings.Contains(js, "/api/panel/keys") || !strings.Contains(js, "/api/panel/sub") || !strings.Contains(js, "closest(\"#sub-load\")") || !strings.Contains(js, "drawTrends") {
+	if res.Code != 200 || !strings.Contains(js, "/api/panel/keys") || !strings.Contains(js, "/api/panel/sub") || !strings.Contains(js, "closest(\"#sub-load\")") || !strings.Contains(js, "drawTrends") || !strings.Contains(js, "openai: \"--p-openai\"") {
 		t.Fatal(js)
 	}
 	if !strings.Contains(js, `dlg.returnValue = ""`) {
@@ -537,8 +537,88 @@ func TestPanelSubOmitsUnknownProviders(t *testing.T) {
 	req.Header.Set("cookie", session)
 	booted.Handler.ServeHTTP(res, req)
 	html := res.Body.String()
-	if !strings.Contains(html, ">Sub<") || !strings.Contains(html, "id=\"sub-load\"") || !strings.Contains(html, "/panel.js?v=0.7.1") {
+	if !strings.Contains(html, ">Sub<") || !strings.Contains(html, "id=\"sub-load\"") || !strings.Contains(html, "/panel.js?v=0.8.0") {
 		t.Fatalf("%s", html)
+	}
+}
+
+func TestAddOpenAISourceFromPanel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer sk-test" {
+			w.WriteHeader(401)
+			return
+		}
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"gpt-4o","name":"GPT-4o"}]}`))
+	}))
+	defer srv.Close()
+	restore := provider.SetJSONClientForTests(srv.Client())
+	defer restore()
+	booted, session := unlocked(t)
+	defer booted.DB.Close()
+	form := url.Values{"label": {"OpenRouter"}, "base_url": {srv.URL + "/v1"}, "secret": {"sk-test"}}
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/sources/openai", strings.NewReader(form.Encode()))
+	req.Header.Set("content-type", "application/x-www-form-urlencoded")
+	req.Header.Set("cookie", session)
+	booted.Handler.ServeHTTP(res, req)
+	if res.Code != 303 || res.Header().Get("location") != "/" {
+		t.Fatalf("status %d loc %s body %s", res.Code, res.Header().Get("location"), res.Body.String())
+	}
+	creds, err := booted.Fob.Vault.List(domain.ProviderOpenAI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(creds) != 1 || creds[0].Label != "OpenRouter" || creds[0].Tokens.AccessToken != "sk-test" {
+		t.Fatalf("%+v", creds)
+	}
+	if creds[0].Tokens.Extra["slug"] != "openrouter" {
+		t.Fatalf("slug %+v", creds[0].Tokens.Extra)
+	}
+	page := httptest.NewRecorder()
+	pageReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	pageReq.Header.Set("cookie", session)
+	booted.Handler.ServeHTTP(page, pageReq)
+	html := page.Body.String()
+	if !strings.Contains(html, "OpenRouter") || !strings.Contains(html, "openrouter") {
+		t.Fatalf("%s", html)
+	}
+
+	created, err := booted.Fob.Keys.Create("t", nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	models := httptest.NewRecorder()
+	modelsReq := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	modelsReq.Header.Set("authorization", "Bearer "+created.Secret)
+	booted.Handler.ServeHTTP(models, modelsReq)
+	if models.Code != 200 || !strings.Contains(models.Body.String(), "openrouter/gpt-4o") {
+		t.Fatalf("%s", models.Body.String())
+	}
+}
+
+func TestAddOpenAISourceRejectsBadURL(t *testing.T) {
+	booted, session := unlocked(t)
+	defer booted.DB.Close()
+	form := url.Values{"label": {"bad"}, "base_url": {"not-a-url"}, "secret": {"sk"}}
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/sources/openai", strings.NewReader(form.Encode()))
+	req.Header.Set("content-type", "application/x-www-form-urlencoded")
+	req.Header.Set("cookie", session)
+	booted.Handler.ServeHTTP(res, req)
+	if res.Code != 200 || !strings.Contains(res.Body.String(), "Add OpenAI source") {
+		t.Fatalf("status %d %s", res.Code, res.Body.String())
+	}
+	creds, err := booted.Fob.Vault.List(domain.ProviderOpenAI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(creds) != 0 {
+		t.Fatalf("saved invalid source %+v", creds)
 	}
 }
 

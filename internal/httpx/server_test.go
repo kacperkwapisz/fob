@@ -49,6 +49,13 @@ func TestGuardSkipsTimeoutOnPanelSub(t *testing.T) {
 	}
 }
 
+func TestGuardSkipsTimeoutOnOpenAISource(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/sources/openai", nil)
+	if !noTimeout(req) {
+		t.Fatal("openai source connect should skip the 30s guard")
+	}
+}
+
 func TestGuardHonorsHealth(t *testing.T) {
 	mux := NewMux()
 	mux.Handle(http.MethodGet, "/health", func(w http.ResponseWriter, _ *http.Request) {

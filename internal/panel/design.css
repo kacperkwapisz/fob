@@ -25,6 +25,7 @@
   --p-codex: #6b8fd4;
   --p-grok: #d1b054;
   --p-cursor: #9aa5b1;
+  --p-openai: #74c0c0;
   --font-display: "IBM Plex Sans", "Segoe UI", Helvetica, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Menlo, monospace;
   --space-1: 0.25rem;
@@ -511,9 +512,59 @@ body:has(.gate) main {
   border-top: 1px solid var(--line);
 }
 
-.mint .grow {
+.mint .grow,
+.source-form .grow {
   flex: 1;
   min-width: 0;
+}
+
+.source-block {
+  margin-top: var(--space-5);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--line);
+}
+
+.source-block h3 {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.source-block > .lede {
+  margin: 0.35rem 0 var(--space-4);
+}
+
+.source-form {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin-top: var(--space-4);
+}
+
+.source-form .field {
+  min-width: 8rem;
+}
+
+.source-form .btn {
+  flex-shrink: 0;
+}
+
+@media (max-width: 720px) {
+  .source-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .source-form .field,
+  .source-form .grow {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .source-form .btn-primary {
+    width: 100%;
+  }
 }
 
 .field {
@@ -531,6 +582,7 @@ body:has(.gate) main {
 input[type="password"],
 input[type="text"],
 input[type="number"],
+input[type="url"],
 textarea {
   background: var(--bg-inset);
   color: var(--ink);
@@ -543,7 +595,8 @@ textarea {
 
 input[type="password"],
 input[type="text"],
-input[type="number"] {
+input[type="number"],
+input[type="url"] {
   min-height: 2.75rem;
 }
 

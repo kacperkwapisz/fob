@@ -11,9 +11,14 @@ import (
 	"github.com/kacperkwapisz/fob/internal/httpx"
 	"github.com/kacperkwapisz/fob/internal/provider"
 	"github.com/kacperkwapisz/fob/internal/provider/cursor"
+	"github.com/kacperkwapisz/fob/internal/provider/openai"
 	"github.com/kacperkwapisz/fob/internal/store"
 	"github.com/kacperkwapisz/fob/internal/translate"
 )
+
+type liveModels interface {
+	ModelsFor(context.Context, domain.Credential) []domain.ModelInfo
+}
 
 const (
 	SettingCursorPrefix       = "cursor.prefix"
@@ -93,7 +98,7 @@ func Proxy(ctx context.Context, fob *Fob, req Request) (Result, error) {
 			inboundBody = translate.FlattenCodexMultiAgent(req.Body)
 		}
 		translated := translate.TranslateRequest(req.Inbound, executor.Format(), hop.Model, req.Stream, inboundBody)
-		creds, err := pickCredentials(fob, hop.Provider, req.Key.ID, req.StickyID)
+		creds, err := pickCredentials(fob, hop.Provider, hop.Model, req.Key.ID, req.StickyID)
 		if err != nil {
 			return Result{}, err
 		}
@@ -217,7 +222,12 @@ func ListModels(fob *Fob) []domain.ModelInfo {
 	seenProv := map[domain.ProviderID]bool{}
 	var native []domain.ProviderID
 	cursorOn := false
+	var openaiOn []domain.Credential
 	for _, c := range creds {
+		if c.Provider == domain.ProviderOpenAI {
+			openaiOn = append(openaiOn, c)
+			continue
+		}
 		if seenProv[c.Provider] {
 			continue
 		}
@@ -235,7 +245,10 @@ func ListModels(fob *Fob) []domain.ModelInfo {
 	}
 	seenID := map[string]bool{}
 	var models []domain.ModelInfo
+	var addMu sync.Mutex
 	add := func(list []domain.ModelInfo) {
+		addMu.Lock()
+		defer addMu.Unlock()
 		for _, m := range list {
 			if seenID[m.ID] {
 				continue
@@ -255,6 +268,19 @@ func ListModels(fob *Fob) []domain.ModelInfo {
 		if ex := fob.Executors[domain.ProviderCursor]; ex != nil {
 			add(cursorModelsForList(ex, prefix))
 		}
+	}
+	if live, ok := fob.Executors[domain.ProviderOpenAI].(liveModels); ok && len(openaiOn) > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		defer cancel()
+		var wg sync.WaitGroup
+		for _, c := range openaiOn {
+			wg.Add(1)
+			go func(c domain.Credential) {
+				defer wg.Done()
+				add(live.ModelsFor(ctx, c))
+			}(c)
+		}
+		wg.Wait()
 	}
 	if models == nil {
 		models = []domain.ModelInfo{}
@@ -282,10 +308,20 @@ type hop struct {
 	Model    string
 }
 
-func pickCredentials(fob *Fob, providerID domain.ProviderID, keyID, stickyID string) ([]domain.Credential, error) {
+func pickCredentials(fob *Fob, providerID domain.ProviderID, model, keyID, stickyID string) ([]domain.Credential, error) {
 	all, err := fob.Vault.List(providerID)
 	if err != nil {
 		return nil, err
+	}
+	if providerID == domain.ProviderOpenAI {
+		matched := []domain.Credential{}
+		for _, c := range all {
+			slug := openai.SourceSlug(c)
+			if slug != "" && strings.HasPrefix(model, slug+"/") {
+				matched = append(matched, c)
+			}
+		}
+		all = matched
 	}
 	if providerID == domain.ProviderCursor {
 		oauth := []domain.Credential{}
@@ -328,6 +364,9 @@ func pickCredentials(fob *Fob, providerID domain.ProviderID, keyID, stickyID str
 }
 
 func resolveProviderChain(fob *Fob, rawModel string) []hop {
+	if hops := openaiSourceHops(fob, rawModel); len(hops) > 0 {
+		return hops
+	}
 	forced := strings.HasPrefix(rawModel, "cursor/")
 	model := cursor.StripPublicPrefix(rawModel)
 	known := cursor.KnownIDs()
@@ -380,6 +419,9 @@ func resolveProviderChain(fob *Fob, rawModel string) []hop {
 	}
 	creds, _ := fob.Vault.List()
 	for _, c := range creds {
+		if c.Provider == domain.ProviderOpenAI {
+			continue
+		}
 		ex := fob.Executors[c.Provider]
 		if ex == nil {
 			continue
@@ -388,6 +430,17 @@ func resolveProviderChain(fob *Fob, rawModel string) []hop {
 			if m.ID == model {
 				return []hop{{c.Provider, model}}
 			}
+		}
+	}
+	return nil
+}
+
+func openaiSourceHops(fob *Fob, model string) []hop {
+	list, _ := fob.Vault.List(domain.ProviderOpenAI)
+	for _, c := range list {
+		slug := openai.SourceSlug(c)
+		if slug != "" && strings.HasPrefix(model, slug+"/") {
+			return []hop{{domain.ProviderOpenAI, model}}
 		}
 	}
 	return nil
@@ -494,12 +547,18 @@ func record(fob *Fob, req Request, providerID domain.ProviderID, model string, s
 		domain.ProviderCodex:  "openai",
 		domain.ProviderGrok:   "xai",
 		domain.ProviderCursor: "cursor",
+		domain.ProviderOpenAI: "openai",
 	}[providerID]
 	meterModel := model
 	if routed != "" {
 		meterModel = routed
 	}
 	usd := fob.Prices.Estimate(priceProvider, meterModel, pt, ct, cr, cw)
+	if usd == 0 && providerID == domain.ProviderOpenAI {
+		if i := strings.Index(meterModel, "/"); i >= 0 {
+			usd = fob.Prices.Estimate(priceProvider, meterModel[i+1:], pt, ct, cr, cw)
+		}
+	}
 	_ = fob.Usage.Record(domain.UsageEvent{
 		TS: time.Now().UnixMilli(), KeyID: req.Key.ID, Provider: providerID, Model: meterModel, Inbound: req.Inbound,
 		PromptTokens: pt, CompletionTokens: ct, CacheReadTokens: cr, CacheWriteTokens: cw,

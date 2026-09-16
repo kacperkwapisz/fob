@@ -1,11 +1,11 @@
 # Fob
 
-A local OpenAI-compatible proxy that turns Claude, Codex, Grok, and Cursor subscriptions into keys other tools can call.
+A local OpenAI-compatible proxy that turns Claude, Codex, Grok, and Cursor subscriptions — plus any OpenAI-compatible API — into keys other tools can call.
 
 ## Language
 
 **Credential**:
-An OAuth login for one upstream provider, stored encrypted in SQLite.
+An OAuth login for one upstream provider, or an OpenAI-compatible source (base URL + key), stored encrypted in SQLite.
 _Avoid_: account, auth file, token
 
 **LocalKey**:
