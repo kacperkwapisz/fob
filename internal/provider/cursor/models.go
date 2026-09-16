@@ -431,9 +431,43 @@ func RegisterModelVariants(models []Model) {
 
 func Snapshot() []Model { return snapshot }
 
+func expandFastTwins(families, source []Model) []Model {
+	out := make([]Model, 0, len(families)*2)
+	for _, m := range families {
+		out = append(out, m)
+		if !familyHasFast(source, m.ID) {
+			continue
+		}
+		fast := m
+		fast.ID = m.ID + "-fast"
+		if !containsWord(strings.ToLower(m.Name), "fast") {
+			fast.Name = strings.TrimSpace(m.Name) + " (fast)"
+		}
+		out = append(out, fast)
+	}
+	return out
+}
+
+func familyHasFast(models []Model, family string) bool {
+	for _, m := range models {
+		if publicFamilyID(m.ID) != family && m.ID != family {
+			continue
+		}
+		if strings.HasSuffix(m.ID, "-fast") {
+			return true
+		}
+		for _, pair := range m.VariantIDs {
+			if pair.fast != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func ToModelInfo(models []Model, prefix bool) []domain.ModelInfo {
 	source := models
-	models = CollapseForList(models)
+	models = expandFastTwins(CollapseForList(models), source)
 	out := make([]domain.ModelInfo, len(models))
 	for i, m := range models {
 		id := PublicID(m.ID)
@@ -445,7 +479,8 @@ func ToModelInfo(models []Model, prefix bool) []domain.ModelInfo {
 			Name: m.Name, DisplayName: m.Name,
 			ContextLength: m.ContextWindow, MaxOutputTokens: m.MaxTokens,
 		}
-		if ctx, maxOut, cost, input, ok := provider.Limits(id); ok {
+		limitID := strings.TrimSuffix(id, "-fast")
+		if ctx, maxOut, cost, input, ok := provider.Limits(limitID); ok {
 			if ctx > 0 {
 				info.ContextLength = ctx
 			}

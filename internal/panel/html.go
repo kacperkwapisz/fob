@@ -39,8 +39,9 @@ type UsageProps struct {
 }
 
 type SettingsProps struct {
-	CursorPrefix bool
-	GrokFailover bool
+	CursorPrefix   bool
+	GrokFailover   bool
+	CursorListFast bool
 }
 
 func Layout(title, meta, body string) string {
@@ -486,6 +487,10 @@ func cursorSettingsCard(settings SettingsProps) string {
 	if settings.CursorPrefix {
 		prefix = "checked"
 	}
+	fast := ""
+	if settings.CursorListFast {
+		fast = "checked"
+	}
 	grok := ""
 	if settings.GrokFailover {
 		grok = "checked"
@@ -493,9 +498,16 @@ func cursorSettingsCard(settings SettingsProps) string {
 	return fmt.Sprintf(`<section class="card card-settings">
       <div class="card-head">
         <h2>Cursor</h2>
-        <p class="lede">Prefix listed Cursor models with <code>cursor/</code> (effort/fast variants already collapse). Grok failover maps <code>grok-4.5</code> onto Cursor Grok when the Grok sub is exhausted.</p>
+        <p class="lede">Effort variants still collapse. Fast twins list as <code>…-fast</code>. Prefix listed Cursor models with <code>cursor/</code>. Grok failover maps <code>grok-4.5</code> onto Cursor Grok when the Grok sub is exhausted.</p>
       </div>
       <form method="post" action="/settings/cursor" class="stack" data-autosave>
+        <label class="switch-row">
+          <span>
+            <strong>List fast models</strong>
+            <span class="lede">Advertise <code>composer-2.5-fast</code> next to <code>composer-2.5</code></span>
+          </span>
+          <input class="switch" type="checkbox" name="list_fast" value="1" %s />
+        </label>
         <label class="switch-row">
           <span>
             <strong>Prefix Cursor models</strong>
@@ -512,7 +524,7 @@ func cursorSettingsCard(settings SettingsProps) string {
         </label>
         <button class="btn js-hide" type="submit">Save</button>
       </form>
-    </section>`, prefix, grok)
+    </section>`, fast, prefix, grok)
 }
 
 func gate(title, lede, err, form string) string {

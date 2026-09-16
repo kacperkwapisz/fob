@@ -222,15 +222,81 @@ func TestListModelsCollapsesCursorVariants(t *testing.T) {
 			t.Fatalf("duplicate id %s", m.ID)
 		}
 	}
-	for _, id := range []string{"grok-4.5", "claude-opus-5", "claude-opus-5-thinking", "composer-2.5", "cursor-grok-4.5", "cursor-grok-4.6"} {
+	for _, id := range []string{"grok-4.5", "claude-opus-5", "claude-opus-5-thinking", "composer-2.5", "composer-2.5-fast", "cursor-grok-4.5", "cursor-grok-4.6", "cursor-grok-4.6-fast"} {
 		if ids[id] != 1 {
 			t.Fatalf("missing %s", id)
 		}
 	}
-	for _, id := range []string{"claude-opus-5-medium", "claude-opus-5-high-fast", "composer-2.5-fast", "cursor-grok-4.5-medium", "grok-4.6"} {
+	for _, id := range []string{"claude-opus-5-medium", "claude-opus-5-high-fast", "cursor-grok-4.5-medium", "grok-4.6"} {
 		if ids[id] != 0 {
 			t.Fatalf("variant listed %s", id)
 		}
+	}
+}
+
+func TestListModelsHidesFastWhenDisabled(t *testing.T) {
+	fob, d := testFob(t, map[domain.ProviderID]provider.Executor{
+		domain.ProviderCursor: &cursor.Executor{},
+		domain.ProviderClaude: fakeExec{id: domain.ProviderClaude, format: domain.FormatClaude},
+		domain.ProviderCodex:  fakeExec{id: domain.ProviderCodex, format: domain.FormatCodex},
+		domain.ProviderGrok:   fakeExec{id: domain.ProviderGrok, format: domain.FormatGrok},
+	})
+	defer d.Close()
+	_, _ = fob.Vault.Save(store.SaveCredential{ID: "c", Provider: domain.ProviderCursor, Label: "Cursor", Tokens: domain.CredentialTokens{AccessToken: "c", Extra: map[string]any{"kind": "oauth"}}})
+	_ = fob.Settings.Set(SettingCursorListFast, "0")
+	ids := map[string]bool{}
+	for _, m := range ListModels(fob) {
+		ids[m.ID] = true
+	}
+	if !ids["composer-2.5"] {
+		t.Fatal("missing composer-2.5")
+	}
+	if ids["composer-2.5-fast"] || ids["claude-opus-5-fast"] {
+		t.Fatalf("fast still listed %+v", ids)
+	}
+}
+
+func TestFastSuffixRoutesToCursor(t *testing.T) {
+	var seen []domain.ProviderID
+	fob, d := testFob(t, map[domain.ProviderID]provider.Executor{
+		domain.ProviderCodex: fakeExec{
+			id: domain.ProviderCodex, format: domain.FormatCodex,
+			models: []domain.ModelInfo{{ID: "gpt-5.6-terra", Object: "model", OwnedBy: "codex"}},
+			fn: func(domain.Credential) provider.ExecuteResult {
+				seen = append(seen, domain.ProviderCodex)
+				return provider.ExecuteResult{OK: false, Status: 500}
+			},
+		},
+		domain.ProviderCursor: fakeExec{
+			id: domain.ProviderCursor, format: domain.FormatCursor,
+			models: []domain.ModelInfo{{ID: "gpt-5.6-terra-fast", Object: "model", OwnedBy: "cursor"}},
+			fn: func(domain.Credential) provider.ExecuteResult {
+				seen = append(seen, domain.ProviderCursor)
+				return provider.ExecuteResult{OK: true, Status: 200, Body: map[string]any{
+					"id": "chatcmpl_1", "object": "chat.completion",
+					"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": "ok"}, "finish_reason": "stop"}},
+				}}
+			},
+		},
+	})
+	defer d.Close()
+	_, _ = fob.Vault.Save(store.SaveCredential{ID: "codex", Provider: domain.ProviderCodex, Label: "Codex", Tokens: domain.CredentialTokens{AccessToken: "x", Extra: map[string]any{}}})
+	_, _ = fob.Vault.Save(store.SaveCredential{ID: "cursor", Provider: domain.ProviderCursor, Label: "Cursor", Tokens: domain.CredentialTokens{AccessToken: "c", Extra: map[string]any{"kind": "oauth"}}})
+	created, err := fob.Keys.Create("t", nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _ := fob.Keys.Verify(created.Secret)
+	result, err := Proxy(context.Background(), fob, Request{
+		Inbound: domain.InboundOpenAIChat,
+		Body:    map[string]any{"model": "gpt-5.6-terra-fast", "messages": []any{map[string]any{"role": "user", "content": "hi"}}},
+		Key:     *key,
+	})
+	if err != nil || !result.OK {
+		t.Fatalf("%+v %v", result, err)
+	}
+	if len(seen) != 1 || seen[0] != domain.ProviderCursor {
+		t.Fatalf("seen %v", seen)
 	}
 }
 

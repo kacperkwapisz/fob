@@ -261,11 +261,16 @@ func registerPanel(mux *httpx.Mux, fob *proxy.Fob, e *env.Env, panelAuth *store.
 		if httpx.FormString(body, "prefix") == "1" {
 			prefix = "1"
 		}
+		listFast := "0"
+		if httpx.FormString(body, "list_fast") == "1" {
+			listFast = "1"
+		}
 		grok := "0"
 		if httpx.FormString(body, "grok_failover") == "1" {
 			grok = "1"
 		}
 		_ = settings.Set(proxy.SettingCursorPrefix, prefix)
+		_ = settings.Set(proxy.SettingCursorListFast, listFast)
 		_ = settings.Set(proxy.SettingCursorGrokFailover, grok)
 		httpx.SeeOther(w, "/", "")
 	})
@@ -339,6 +344,7 @@ func dashboard(fob *proxy.Fob, settings *store.SettingsStore) string {
 	daily, _ := fob.Usage.Daily(7)
 	trends, _ := fob.Usage.Daily(trendDays)
 	prefix, _ := settings.Get(proxy.SettingCursorPrefix)
+	listFast, listFastSet := settings.Get(proxy.SettingCursorListFast)
 	grok, _ := settings.Get(proxy.SettingCursorGrokFailover)
 	subN := 0
 	var sources []panel.SourceProps
@@ -362,7 +368,7 @@ func dashboard(fob *proxy.Fob, settings *store.SettingsStore) string {
 			Today: today, D7: d7, ByProvider: byProvider, ByModel: byModel, Daily: daily, Trends: trends,
 		},
 		SubCount: subN,
-		Settings: panel.SettingsProps{CursorPrefix: prefix == "1", GrokFailover: grok == "1"},
+		Settings: panel.SettingsProps{CursorPrefix: prefix == "1", CursorListFast: !listFastSet || listFast != "0", GrokFailover: grok == "1"},
 		Sources:  sources,
 	})
 }

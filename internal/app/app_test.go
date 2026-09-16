@@ -447,24 +447,37 @@ func TestCursorSettingsURLEncoded(t *testing.T) {
 			t.Fatalf("status %d", res.Code)
 		}
 	}
-	post(url.Values{"prefix": {"1"}, "grok_failover": {"1"}})
-	if v, _ := booted.Fob.Settings.Get(proxy.SettingCursorPrefix); v != "1" {
-		t.Fatalf("prefix %q", v)
-	}
-	if v, _ := booted.Fob.Settings.Get(proxy.SettingCursorGrokFailover); v != "1" {
-		t.Fatalf("grok %q", v)
-	}
 	page := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("cookie", session)
 	booted.Handler.ServeHTTP(page, req)
+	if !strings.Contains(page.Body.String(), `name="list_fast" value="1" checked`) {
+		t.Fatal("list_fast should default on")
+	}
+	post(url.Values{"prefix": {"1"}, "grok_failover": {"1"}, "list_fast": {"1"}})
+	if v, _ := booted.Fob.Settings.Get(proxy.SettingCursorPrefix); v != "1" {
+		t.Fatalf("prefix %q", v)
+	}
+	if v, _ := booted.Fob.Settings.Get(proxy.SettingCursorListFast); v != "1" {
+		t.Fatalf("list_fast %q", v)
+	}
+	if v, _ := booted.Fob.Settings.Get(proxy.SettingCursorGrokFailover); v != "1" {
+		t.Fatalf("grok %q", v)
+	}
+	page = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("cookie", session)
+	booted.Handler.ServeHTTP(page, req)
 	html := page.Body.String()
-	if !strings.Contains(html, `name="prefix" value="1" checked`) || !strings.Contains(html, `name="grok_failover" value="1" checked`) {
+	if !strings.Contains(html, `name="prefix" value="1" checked`) || !strings.Contains(html, `name="grok_failover" value="1" checked`) || !strings.Contains(html, `name="list_fast" value="1" checked`) {
 		t.Fatal("toggles not checked after save")
 	}
 	post(url.Values{})
 	if v, _ := booted.Fob.Settings.Get(proxy.SettingCursorPrefix); v != "0" {
 		t.Fatalf("prefix after clear %q", v)
+	}
+	if v, _ := booted.Fob.Settings.Get(proxy.SettingCursorListFast); v != "0" {
+		t.Fatalf("list_fast after clear %q", v)
 	}
 	if v, _ := booted.Fob.Settings.Get(proxy.SettingCursorGrokFailover); v != "0" {
 		t.Fatalf("grok after clear %q", v)

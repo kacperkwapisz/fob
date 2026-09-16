@@ -117,7 +117,10 @@ func TestExpandKeepsVariantIDs(t *testing.T) {
 		t.Fatalf("got %s", got)
 	}
 	listed := ToModelInfo(models, false)
-	if len(listed) != 1 || !equalStrings(listed[0].Efforts, []string{"high"}) {
+	if len(listed) != 2 || listed[0].ID != "composer-2.5" || listed[1].ID != "composer-2.5-fast" {
+		t.Fatalf("listed %+v", listed)
+	}
+	if !equalStrings(listed[0].Efforts, []string{"high"}) || !equalStrings(listed[1].Efforts, []string{"high"}) {
 		t.Fatalf("live variantIds efforts %+v", listed)
 	}
 }
@@ -190,6 +193,14 @@ func TestCollapseForListDropsEffortAndFast(t *testing.T) {
 	if !listedIDs["cursor-auto"] {
 		t.Fatal("cursor-auto")
 	}
+	for _, id := range []string{"composer-2.5-fast", "claude-opus-5-fast", "claude-opus-5-thinking-fast", "cursor-grok-4.6-fast"} {
+		if !listedIDs[id] {
+			t.Fatalf("missing fast twin %s", id)
+		}
+	}
+	if listedIDs["claude-opus-5-high-fast"] || listedIDs["composer-2.5-fast-fast"] {
+		t.Fatal("effort fast still listed")
+	}
 	if ids["claude-opus-4-7"] != "Opus 4.7 1M" {
 		t.Fatalf("opus 4.7 name %q", ids["claude-opus-4-7"])
 	}
@@ -255,7 +266,7 @@ func TestLiveGrokListsAsCursorPrefixed(t *testing.T) {
 		{ID: "grok-4.6-xhigh", Name: "Cursor Grok 4.6"},
 		{ID: "grok-4.6-xhigh-fast", Name: "Cursor Grok 4.6 (fast)"},
 	}, false)
-	if len(listed) != 1 || listed[0].ID != "cursor-grok-4.6" {
+	if len(listed) != 2 || listed[0].ID != "cursor-grok-4.6" || listed[1].ID != "cursor-grok-4.6-fast" {
 		t.Fatalf("%+v", listed)
 	}
 	if listed[0].OwnedBy != "cursor" {

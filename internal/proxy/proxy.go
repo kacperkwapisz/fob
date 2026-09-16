@@ -23,6 +23,7 @@ type liveModels interface {
 const (
 	SettingCursorPrefix       = "cursor.prefix"
 	SettingCursorGrokFailover = "cursor.grokFailover"
+	SettingCursorListFast     = "cursor.listFast"
 )
 
 type Fob struct {
@@ -239,9 +240,11 @@ func ListModels(fob *Fob) []domain.ModelInfo {
 		native = append(native, c.Provider)
 	}
 	prefix := false
+	listFast := true
 	if fob.Settings != nil {
 		v, _ := fob.Settings.Get(SettingCursorPrefix)
 		prefix = v == "1"
+		listFast = settingOnByDefault(fob, SettingCursorListFast)
 	}
 	seenID := map[string]bool{}
 	var models []domain.ModelInfo
@@ -266,7 +269,7 @@ func ListModels(fob *Fob) []domain.ModelInfo {
 	}
 	if cursorOn {
 		if ex := fob.Executors[domain.ProviderCursor]; ex != nil {
-			add(cursorModelsForList(ex, prefix))
+			add(cursorModelsForList(ex, prefix, listFast))
 		}
 	}
 	if live, ok := fob.Executors[domain.ProviderOpenAI].(liveModels); ok && len(openaiOn) > 0 {
@@ -288,8 +291,18 @@ func ListModels(fob *Fob) []domain.ModelInfo {
 	return models
 }
 
-func cursorModelsForList(ex provider.Executor, prefix bool) []domain.ModelInfo {
+func cursorModelsForList(ex provider.Executor, prefix, listFast bool) []domain.ModelInfo {
 	models := ex.Models()
+	if !listFast {
+		filtered := make([]domain.ModelInfo, 0, len(models))
+		for _, m := range models {
+			if strings.HasSuffix(cursor.StripPublicPrefix(m.ID), "-fast") {
+				continue
+			}
+			filtered = append(filtered, m)
+		}
+		models = filtered
+	}
 	if !prefix {
 		return models
 	}
@@ -372,7 +385,7 @@ func resolveProviderChain(fob *Fob, rawModel string) []hop {
 	known := cursor.KnownIDs()
 	restored := cursor.RestoreWirePrefix(model, known)
 	cursorOK := cursorConnected(fob)
-	if forced || strings.HasPrefix(restored, "composer-") || strings.HasPrefix(restored, "cursor-") || strings.HasPrefix(restored, "gemini-") || strings.HasPrefix(restored, "kimi-") || strings.HasPrefix(restored, "glm-") || restored == "cursor-auto" {
+	if forced || strings.HasSuffix(model, "-fast") || strings.HasSuffix(restored, "-fast") || strings.HasPrefix(restored, "composer-") || strings.HasPrefix(restored, "cursor-") || strings.HasPrefix(restored, "gemini-") || strings.HasPrefix(restored, "kimi-") || strings.HasPrefix(restored, "glm-") || restored == "cursor-auto" {
 		var hops []hop
 		if cursorOK {
 			hops = append(hops, hop{domain.ProviderCursor, restored})
@@ -457,6 +470,17 @@ func grokFailoverOn(fob *Fob) bool {
 	}
 	v, _ := fob.Settings.Get(SettingCursorGrokFailover)
 	return v == "1"
+}
+
+func settingOnByDefault(fob *Fob, key string) bool {
+	if fob == nil || fob.Settings == nil {
+		return true
+	}
+	v, ok := fob.Settings.Get(key)
+	if !ok {
+		return true
+	}
+	return v != "0"
 }
 
 func requestedModel(body any) string {
