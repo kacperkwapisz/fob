@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"os"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -200,7 +199,6 @@ func buildCursorRequest(
 		state = &agentpb.ConversationStateStructure{}
 		_ = proto.Unmarshal(checkpoint, state)
 	} else {
-		cwd, _ := os.Getwd()
 		mode := int32(1)
 		var turnBlobIDs [][]byte
 		for _, turn := range turns {
@@ -228,7 +226,7 @@ func buildCursorRequest(
 			Turns:                  turnBlobIDs,
 			Todos:                  [][]byte{},
 			PendingToolCalls:       []string{},
-			PreviousWorkspaceUris:  []string{"file://" + cwd},
+			PreviousWorkspaceUris:  []string{},
 			Mode:                   &mode,
 			FileStates:             map[string][]byte{},
 			FileStatesV2:           map[string]*agentpb.FileStateStructure{},

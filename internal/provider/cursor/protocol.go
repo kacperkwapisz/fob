@@ -389,6 +389,12 @@ func RunChat(ctx context.Context, accessToken string, body map[string]any, strea
 	}
 	hash := requestHashOf(translate.AsStr(body["model"]), body["messages"], body["tools"], body["cursor_requested_model"])
 	resume := len(stored.checkpoint) > 0 && stored.resumeRequestHash == hash
+	if !resume {
+		stored.conversationID = randomUUID()
+		stored.checkpoint = nil
+		stored.resumeRequestHash = ""
+		stored.blobStore = map[string][]byte{}
+	}
 	var images []ImagePart
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role == "user" {
@@ -650,6 +656,7 @@ func runStream(ctx context.Context, accessToken string, payload requestPayload, 
 		select {
 		case <-ctx.Done():
 			cancelled = true
+			dropConversation(convKey)
 			cleanupActive(&activeBridge{bridge: bridge, stopHeart: stopHeart})
 			finish()
 		case <-done:

@@ -104,6 +104,80 @@ func TestRunCursorChatScripted(t *testing.T) {
 	_ = translate.AsMap
 }
 
+func TestOverlappingSamePromptGetsNewConversationID(t *testing.T) {
+	t.Setenv("CURSOR_AGENT_URL", "https://agentn.test.cursor.sh")
+	var ids []string
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	SetBridgeFactoryForTests(func(_, _, _ string, _ bool, _ ClientKind) *Bridge {
+		var onData func([]byte)
+		var onClose func(int)
+		alive := true
+		return &Bridge{
+			Write: func(frame []byte) {
+				if len(frame) < 5 {
+					return
+				}
+				var msg agentpb.AgentClientMessage
+				if proto.Unmarshal(frame[5:], &msg) != nil {
+					return
+				}
+				if run := msg.GetRunRequest(); run != nil {
+					ids = append(ids, run.GetConversationId())
+					select {
+					case started <- struct{}{}:
+					default:
+					}
+					go func() {
+						<-release
+						if onData != nil {
+							onData(frameConnect(mustMarshal(&agentpb.AgentServerMessage{
+								Message: &agentpb.AgentServerMessage_InteractionUpdate{
+									InteractionUpdate: &agentpb.InteractionUpdate{
+										Message: &agentpb.InteractionUpdate_TurnEnded{TurnEnded: &agentpb.TurnEndedUpdate{}},
+									},
+								},
+							}), 0))
+						}
+						if onClose != nil {
+							onClose(0)
+						}
+					}()
+				}
+			},
+			End:     func() { alive = false },
+			OnData:  func(cb func([]byte)) { onData = cb },
+			OnClose: func(cb func(int)) { onClose = cb },
+			Alive:   func() bool { return alive },
+		}
+	})
+	defer SetBridgeFactoryForTests(nil)
+	defer CleanupAllSessionState()
+
+	body := map[string]any{
+		"model":    "composer-2.5",
+		"messages": []any{map[string]any{"role": "user", "content": "same prompt"}},
+		"stream":   true,
+	}
+	first, err := RunChat(context.Background(), "tok", body, true, ClientCLI)
+	if err != nil || first.Stream == nil {
+		t.Fatalf("%+v %v", first, err)
+	}
+	<-started
+	second, err := RunChat(context.Background(), "tok", body, true, ClientCLI)
+	if err != nil || second.Stream == nil {
+		t.Fatalf("%+v %v", second, err)
+	}
+	close(release)
+	for range first.Stream {
+	}
+	for range second.Stream {
+	}
+	if len(ids) != 2 || ids[0] == "" || ids[0] == ids[1] {
+		t.Fatalf("overlapping conversation ids %v", ids)
+	}
+}
+
 func TestConnectErrorDropsConversationState(t *testing.T) {
 	t.Setenv("CURSOR_AGENT_URL", "https://agentn.test.cursor.sh")
 	var ids []string
