@@ -59,3 +59,10 @@ Bearer: a LocalKey (`sk-fob-…`). Meter dollars are **API-equivalent $** from [
 make test
 go run ./cmd/fob
 ```
+
+Live HTTP against a real vault (skips unless you ask):
+
+```bash
+make live                         # boots ~/.fob, mints a throwaway key
+FOB_LIVE_URL=https://llm.perier.pl FOB_LIVE_KEY=sk-fob-… make live
+```

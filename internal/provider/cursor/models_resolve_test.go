@@ -21,6 +21,41 @@ func TestResolveRequestedModelFromSnapshot(t *testing.T) {
 	}
 }
 
+func TestResolveFamilyFastUsesRealWireID(t *testing.T) {
+	cases := map[string]string{
+		"cursor-grok-4.6-fast":        "cursor-grok-4.6-medium-fast",
+		"cursor/cursor-grok-4.6-fast": "cursor-grok-4.6-medium-fast",
+		"composer-2.5-fast":           "composer-2.5-fast",
+		"gpt-5.6-terra-fast":          "gpt-5.6-terra-medium-fast",
+	}
+	known := map[string]bool{}
+	for _, id := range KnownIDs() {
+		known[id] = true
+	}
+	for in, want := range cases {
+		got := resolveModelID(in, "")
+		if got != want {
+			t.Fatalf("%s: got %s want %s", in, got, want)
+		}
+		if !known[got] {
+			t.Fatalf("%s resolved to unknown wire id %s", in, got)
+		}
+		sel := resolveRequestedModel(in, "")
+		if sel == nil {
+			t.Fatalf("%s requested nil", in)
+		}
+		fast := ""
+		for _, p := range sel.Parameters {
+			if p.ID == "fast" {
+				fast = p.Value
+			}
+		}
+		if fast != "true" {
+			t.Fatalf("%s fast param %q model %q params %+v", in, fast, sel.ModelID, sel.Parameters)
+		}
+	}
+}
+
 func TestResolveCursorGrok46(t *testing.T) {
 	if got := resolveModelID("cursor-grok-4.6", "medium"); got != "cursor-grok-4.6-medium" {
 		t.Fatalf("snapshot resolve %s", got)

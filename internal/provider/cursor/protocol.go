@@ -95,7 +95,7 @@ func messagesFromBody(body map[string]any) []OpenAIMessage {
 }
 
 func resolveModelID(model, effort string, fast ...bool) string {
-	base := WireID(model)
+	base := WireID(StripPublicPrefix(model))
 	hasFast := strings.HasSuffix(base, "-fast")
 	if hasFast {
 		base = strings.TrimSuffix(base, "-fast")
@@ -114,34 +114,38 @@ func resolveModelID(model, effort string, fast ...bool) string {
 	wantThinking := strings.Contains(base, "-thinking")
 	variants := lookupVariants(family)
 	if variants != nil {
-		keys := effortKeys(effort)
-		if effort == "" {
-			keys = []string{""}
-		}
-		for _, key := range keys {
-			if pick := pickVariantMatching(variants[key], wantFast, wantThinking); pick != "" {
+		for _, key := range searchEffortKeys(effort) {
+			pair := variants[key]
+			if wantFast && pair.fast == "" {
+				continue
+			}
+			if pick := pickVariantMatching(pair, wantFast, wantThinking); pick != "" {
 				return pick
 			}
 		}
 	}
 	known := KnownIDs()
-	if effort != "" {
-		var last string
-		for _, key := range effortKeys(effort) {
-			candidate := family + "-" + key
-			last = candidate
-			if wantFast {
-				if hit := firstKnown(known, candidate+"-fast", candidate); hit != "" {
-					return hit
-				}
-			} else if hit := firstKnown(known, candidate, candidate+"-fast"); hit != "" {
+	for _, key := range searchEffortKeys(effort) {
+		if key == "" {
+			continue
+		}
+		candidate := family + "-" + key
+		if wantFast {
+			if hit := firstKnown(known, candidate+"-fast", candidate); hit != "" {
+				return hit
+			}
+			continue
+		}
+		if hit := firstKnown(known, candidate, candidate+"-fast"); hit != "" {
+			return hit
+		}
+	}
+	if mapped := MapNativeToWire(strings.TrimSuffix(base, "-fast"), known); mapped != "" {
+		if wantFast {
+			if hit := firstKnown(known, mapped+"-fast", publicFamilyID(mapped)+"-fast"); hit != "" {
 				return hit
 			}
 		}
-		if last != "" {
-			base = last
-		}
-	} else if mapped := MapNativeToWire(model, known); mapped != "" {
 		return mapped
 	}
 	if wantFast && !strings.HasSuffix(base, "-fast") {
@@ -159,6 +163,13 @@ func effortKeys(effort string) []string {
 	default:
 		return []string{effort}
 	}
+}
+
+func searchEffortKeys(effort string) []string {
+	if effort != "" {
+		return effortKeys(effort)
+	}
+	return []string{"", "medium", "high", "xhigh", "max", "low", "none", "extra-high", "minimal"}
 }
 
 func pickVariant(pair variantPair, wantFast bool) string {
@@ -221,7 +232,7 @@ func selectionFromBody(body map[string]any) *requestedModelSelection {
 }
 
 func resolveRequestedModel(model, effort string, fast ...bool) *requestedModelSelection {
-	base := WireID(model)
+	base := WireID(StripPublicPrefix(model))
 	hasFast := strings.HasSuffix(base, "-fast")
 	if hasFast {
 		base = strings.TrimSuffix(base, "-fast")
@@ -243,15 +254,23 @@ func resolveRequestedModel(model, effort string, fast ...bool) *requestedModelSe
 	}
 	var pair variantPair
 	matched := effort
-	keys := effortKeys(effort)
-	if effort == "" {
-		keys = []string{"", "medium"}
-	}
-	for _, key := range keys {
+	for _, key := range searchEffortKeys(effort) {
 		pair = variants[key]
+		if wantFast && pair.fast == "" {
+			continue
+		}
 		if pair.standard != "" || pair.fast != "" {
 			matched = key
 			break
+		}
+	}
+	if pair.standard == "" && pair.fast == "" {
+		for _, key := range searchEffortKeys(effort) {
+			pair = variants[key]
+			if pair.standard != "" || pair.fast != "" {
+				matched = key
+				break
+			}
 		}
 	}
 	if pair.standard == "" && pair.fast == "" {

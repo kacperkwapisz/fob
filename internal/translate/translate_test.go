@@ -231,6 +231,15 @@ func TestCursorTranslateMatrix(t *testing.T) {
 		t.Fatal(body["tools"])
 	}
 
+	out = TranslateRequest(domain.InboundOpenAIResponses, domain.FormatCursor, "composer-2.5", false, map[string]any{
+		"model": "composer-2.5",
+		"input": "hi",
+	})
+	msgs := AsArr(AsMap(out.Body)["messages"])
+	if len(msgs) != 1 || AsStr(AsMap(msgs[0])["role"]) != "user" || AsStr(AsMap(msgs[0])["content"]) != "hi" {
+		t.Fatalf("string input %+v", out.Body)
+	}
+
 	out = TranslateRequest(domain.InboundClaudeMessages, domain.FormatCursor, "composer-2.5", false, map[string]any{
 		"model": "composer-2.5", "system": "be brief",
 		"messages": []any{map[string]any{"role": "user", "content": "hi"}},

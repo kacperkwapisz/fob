@@ -66,6 +66,16 @@ func AsArr(v any) []any {
 	return a
 }
 
+func inputItems(v any) []any {
+	if s, ok := v.(string); ok {
+		if s == "" {
+			return []any{}
+		}
+		return []any{s}
+	}
+	return AsArr(v)
+}
+
 func AsStr(v any, fallback ...string) string {
 	if s, ok := v.(string); ok {
 		return s

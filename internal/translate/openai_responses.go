@@ -16,7 +16,7 @@ func responsesToGrok(model string, stream bool, body any) RequestResult {
 	if rec["instructions"] != nil {
 		messages = append(messages, map[string]any{"role": "system", "content": AsStr(rec["instructions"])})
 	}
-	for _, item := range AsArr(rec["input"]) {
+	for _, item := range inputItems(rec["input"]) {
 		if s, ok := item.(string); ok {
 			messages = append(messages, map[string]any{"role": "user", "content": s})
 			continue
@@ -74,7 +74,7 @@ func responsesToClaude(model string, stream bool, body any) RequestResult {
 	rec := AsMap(body)
 	var messages []any
 	var system any = rec["instructions"]
-	for _, item := range AsArr(rec["input"]) {
+	for _, item := range inputItems(rec["input"]) {
 		if s, ok := item.(string); ok {
 			messages = append(messages, map[string]any{"role": "user", "content": s})
 			continue
