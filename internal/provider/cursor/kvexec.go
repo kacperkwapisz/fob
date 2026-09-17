@@ -3,6 +3,8 @@ package cursor
 import (
 	"encoding/hex"
 	"encoding/json"
+	"strconv"
+	"strings"
 
 	"google.golang.org/protobuf/proto"
 
@@ -75,6 +77,19 @@ func sendExec(bridge *Bridge, exec *agentpb.ExecServerMessage, client *agentpb.E
 	client.ExecId = exec.GetExecId()
 	sendClient(bridge, &agentpb.AgentClientMessage{
 		Message: &agentpb.AgentClientMessage_ExecClientMessage{ExecClientMessage: client},
+	})
+}
+
+func throwExec(bridge *Bridge, exec *agentpb.ExecServerMessage, err string) {
+	if exec == nil {
+		return
+	}
+	sendClient(bridge, &agentpb.AgentClientMessage{
+		Message: &agentpb.AgentClientMessage_ExecClientControlMessage{ExecClientControlMessage: &agentpb.ExecClientControlMessage{
+			Message: &agentpb.ExecClientControlMessage_Throw{Throw: &agentpb.ExecClientThrow{
+				Id: exec.GetId(), Error: err,
+			}},
+		}},
 	})
 }
 
@@ -244,7 +259,49 @@ func execKind(exec *agentpb.ExecServerMessage) string {
 	case *agentpb.ExecServerMessage_WriteShellStdinArgs:
 		return "writeShellStdin"
 	default:
+		if fields := unknownFieldNums(exec); fields != "" {
+			return "unknown(" + fields + ")"
+		}
 		return "unknown"
+	}
+}
+
+func unknownFieldNums(msg proto.Message) string {
+	if msg == nil {
+		return ""
+	}
+	b := msg.ProtoReflect().GetUnknown()
+	var nums []string
+	for len(b) > 0 {
+		field, wire, n := consumeTag(b)
+		if n <= 0 {
+			break
+		}
+		b = b[n:]
+		nums = append(nums, strconv.Itoa(field))
+		skip, n := skipWire(b, wire)
+		if n < 0 || skip > len(b) {
+			break
+		}
+		b = b[skip:]
+	}
+	return strings.Join(nums, ",")
+}
+
+func skipWire(b []byte, wire int) (consumed int, n int) {
+	switch wire {
+	case 0:
+		_, n = consumeVarint(b)
+		return n, n
+	case 1:
+		return 8, 8
+	case 2:
+		ln, n := consumeVarint(b)
+		return n + int(ln), n + int(ln)
+	case 5:
+		return 4, 4
+	default:
+		return 0, -1
 	}
 }
 
@@ -288,8 +345,11 @@ func processServer(
 	}
 	if exec := msg.GetExecServerMessage(); exec != nil {
 		if !handleExec(exec, mcpTools, bridge, onMcp) {
-			onProtocolError("Unsupported Cursor exec message: " + execKind(exec))
+			throwExec(bridge, exec, rejectReason+": "+execKind(exec))
 		}
+		return
+	}
+	if msg.GetExecServerControlMessage() != nil {
 		return
 	}
 	if cp := msg.GetConversationCheckpointUpdate(); cp != nil {

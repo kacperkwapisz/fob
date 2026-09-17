@@ -797,10 +797,15 @@ func resumeTools(ctx context.Context, active *activeBridge, parsed ParsedMessage
 					finish()
 				},
 			)
-		}, func([]byte) { finish() })
+		}, func(end []byte) {
+			if err := parseConnectEnd(end); err != nil {
+				emit(map[string]any{"content": err.Error()}, "error")
+				finish()
+			}
+		})
 	})
 	active.bridge.OnClose(func(code int) {
-		if state.turnEnded {
+		if state.turnEnded || code == closeEOF {
 			emit(map[string]any{}, "stop")
 		} else {
 			emit(map[string]any{"content": closeMessage(code, false)}, "error")

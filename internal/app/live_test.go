@@ -85,6 +85,13 @@ func TestLiveCursorAndGrok(t *testing.T) {
 			}
 			c.chat(t, "gpt-5.6-terra-fast", true)
 		})
+		t.Run("cursor/agentic-tools", func(t *testing.T) {
+			id := pickLiveModel(c.ids, []string{"composer-2.5", "gpt-5.6-sol", "gpt-5.6-sol-medium", "cursor/gpt-5.6-sol-medium"})
+			if id == "" {
+				t.Skip("no agentic cursor model listed")
+			}
+			c.agentic(t, id)
+		})
 		t.Run("cursor/sol-medium-prod", func(t *testing.T) {
 			id := "gpt-5.6-sol-medium"
 			if !c.ids[id] && !c.ids["cursor/"+id] && !c.ids["gpt-5.6-sol"] {
@@ -293,6 +300,57 @@ func (c *liveClient) chat(t *testing.T, model string, stream bool) {
 	c.chatBody(t, map[string]any{"model": model, "stream": stream, "messages": pingMessages()}, stream)
 }
 
+func (c *liveClient) agentic(t *testing.T, model string) {
+	t.Helper()
+	messages := []any{
+		map[string]any{"role": "user", "content": "Call the lookup tool with q set to ping. After the tool returns, reply with only the word pong."},
+	}
+	tools := []any{
+		map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "lookup",
+				"description": "Look something up. You must call this when asked.",
+				"parameters": map[string]any{
+					"type":       "object",
+					"properties": map[string]any{"q": map[string]any{"type": "string"}},
+					"required":   []any{"q"},
+				},
+			},
+		},
+	}
+	for round := 0; round < 4; round++ {
+		res := c.do(t, http.MethodPost, "/v1/chat/completions", map[string]any{
+			"model": model, "stream": true, "messages": messages, "tools": tools,
+		}, true)
+		out := readOpenAIStream(t, res.Body)
+		_ = res.Body.Close()
+		t.Logf("%s round %d finish=%s tools=%d content=%q", model, round, out.finish, len(out.toolCalls), out.content)
+		if out.finish == "error" {
+			t.Fatalf("stream error %s", out.content)
+		}
+		if out.finish == "tool_calls" || len(out.toolCalls) > 0 {
+			messages = append(messages, map[string]any{
+				"role": "assistant", "content": nil, "tool_calls": out.toolCalls,
+			})
+			for _, tc := range out.toolCalls {
+				m := asMap(tc)
+				messages = append(messages, map[string]any{
+					"role":         "tool",
+					"tool_call_id": asStr(m["id"]),
+					"content":      "pong",
+				})
+			}
+			continue
+		}
+		if strings.TrimSpace(out.content) == "" {
+			t.Fatalf("empty agentic completion finish=%s", out.finish)
+		}
+		return
+	}
+	t.Fatal("agentic loop did not finish")
+}
+
 func (c *liveClient) chatBody(t *testing.T, body map[string]any, stream bool) {
 	t.Helper()
 	res := c.do(t, http.MethodPost, "/v1/chat/completions", body, stream)
@@ -390,8 +448,15 @@ func (c *liveClient) responses(t *testing.T, model string, stream bool) {
 	}
 }
 
-func assertOpenAIStream(t *testing.T, body io.Reader) {
+type liveStream struct {
+	finish    string
+	content   string
+	toolCalls []any
+}
+
+func readOpenAIStream(t *testing.T, body io.Reader) liveStream {
 	t.Helper()
+	var out liveStream
 	sawChunk := false
 	finished := false
 	sc := bufio.NewScanner(body)
@@ -410,10 +475,19 @@ func assertOpenAIStream(t *testing.T, body io.Reader) {
 			continue
 		}
 		choice := asMap(first(asArr(chunk["choices"])))
-		if asStr(choice["finish_reason"]) == "error" {
-			t.Fatalf("stream error %s", asStr(asMap(choice["delta"])["content"]))
+		delta := asMap(choice["delta"])
+		if fr := asStr(choice["finish_reason"]); fr != "" {
+			out.finish = fr
 		}
-		if asStr(asMap(choice["delta"])["content"]) != "" || asStr(choice["finish_reason"]) != "" {
+		if s := asStr(delta["content"]); s != "" {
+			out.content += s
+			sawChunk = true
+		}
+		if tc := asArr(delta["tool_calls"]); len(tc) > 0 {
+			out.toolCalls = append(out.toolCalls, tc...)
+			sawChunk = true
+		}
+		if out.finish != "" {
 			sawChunk = true
 		}
 	}
@@ -425,6 +499,15 @@ func assertOpenAIStream(t *testing.T, body io.Reader) {
 	}
 	if !finished {
 		t.Fatal("stream ended without [DONE]")
+	}
+	return out
+}
+
+func assertOpenAIStream(t *testing.T, body io.Reader) {
+	t.Helper()
+	out := readOpenAIStream(t, body)
+	if out.finish == "error" {
+		t.Fatalf("stream error %s", out.content)
 	}
 }
 
@@ -447,6 +530,15 @@ func asArr(v any) []any {
 		return []any{}
 	}
 	return a
+}
+
+func pickLiveModel(ids map[string]bool, want []string) string {
+	for _, id := range want {
+		if ids[id] {
+			return id
+		}
+	}
+	return ""
 }
 
 func asStr(v any) string {

@@ -719,3 +719,39 @@ func TestHandleExecRejectsNewCursorTools(t *testing.T) {
 		}
 	}
 }
+
+func TestUnknownExecThrowsInsteadOfProtocolError(t *testing.T) {
+	var wrote [][]byte
+	var errs []string
+	bridge := &Bridge{Write: func(b []byte) { wrote = append(wrote, append([]byte(nil), b...)) }, End: func() {}, Alive: func() bool { return true }}
+	exec := &agentpb.ExecServerMessage{Id: 9, ExecId: "e9"}
+	raw, err := proto.MarshalOptions{}.MarshalAppend(nil, exec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = append(raw, 0x9a, 0x06, 0x01, 'x') // field 99, bytes, "x"
+	if err := proto.Unmarshal(raw, exec); err != nil {
+		t.Fatal(err)
+	}
+	if execKind(exec) == "unknown" {
+		t.Fatalf("kind %s", execKind(exec))
+	}
+	processServer(&agentpb.AgentServerMessage{
+		Message: &agentpb.AgentServerMessage_ExecServerMessage{ExecServerMessage: exec},
+	}, map[string][]byte{}, nil, bridge, &streamProtoState{}, nil, nil, nil, func(msg string) {
+		errs = append(errs, msg)
+	})
+	if len(errs) != 0 {
+		t.Fatalf("protocol error %v", errs)
+	}
+	if len(wrote) != 1 {
+		t.Fatalf("wrote %d", len(wrote))
+	}
+	var msg agentpb.AgentClientMessage
+	if err := proto.Unmarshal(wrote[0][5:], &msg); err != nil {
+		t.Fatal(err)
+	}
+	if msg.GetExecClientControlMessage() == nil || msg.GetExecClientControlMessage().GetThrow() == nil {
+		t.Fatalf("%+v", msg.GetExecClientControlMessage())
+	}
+}
