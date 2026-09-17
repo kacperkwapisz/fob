@@ -177,7 +177,75 @@ func handleExec(exec *agentpb.ExecServerMessage, mcpTools []*agentpb.McpToolDefi
 		sendExec(bridge, exec, &agentpb.ExecClientMessage{Message: &agentpb.ExecClientMessage_DiagnosticsResult{DiagnosticsResult: &agentpb.DiagnosticsResult{}}})
 		return true
 	}
+	if exec.GetListMcpResourcesExecArgs() != nil {
+		sendExec(bridge, exec, &agentpb.ExecClientMessage{Message: &agentpb.ExecClientMessage_ListMcpResourcesExecResult{ListMcpResourcesExecResult: &agentpb.ListMcpResourcesExecResult{
+			Result: &agentpb.ListMcpResourcesExecResult_Rejected{Rejected: &agentpb.ListMcpResourcesRejected{Reason: rejectReason}},
+		}}})
+		return true
+	}
+	if args := exec.GetReadMcpResourceExecArgs(); args != nil {
+		sendExec(bridge, exec, &agentpb.ExecClientMessage{Message: &agentpb.ExecClientMessage_ReadMcpResourceExecResult{ReadMcpResourceExecResult: &agentpb.ReadMcpResourceExecResult{
+			Result: &agentpb.ReadMcpResourceExecResult_Rejected{Rejected: &agentpb.ReadMcpResourceRejected{Uri: args.GetUri(), Reason: rejectReason}},
+		}}})
+		return true
+	}
+	if exec.GetRecordScreenArgs() != nil {
+		sendExec(bridge, exec, &agentpb.ExecClientMessage{Message: &agentpb.ExecClientMessage_RecordScreenResult{RecordScreenResult: &agentpb.RecordScreenResult{
+			Result: &agentpb.RecordScreenResult_Failure{Failure: &agentpb.RecordScreenFailure{Error: rejectReason}},
+		}}})
+		return true
+	}
+	if exec.GetComputerUseArgs() != nil {
+		sendExec(bridge, exec, &agentpb.ExecClientMessage{Message: &agentpb.ExecClientMessage_ComputerUseResult{ComputerUseResult: &agentpb.ComputerUseResult{
+			Result: &agentpb.ComputerUseResult_Error{Error: &agentpb.ComputerUseError{Error: rejectReason}},
+		}}})
+		return true
+	}
 	return false
+}
+
+func execKind(exec *agentpb.ExecServerMessage) string {
+	if exec == nil {
+		return "unknown"
+	}
+	switch exec.GetMessage().(type) {
+	case *agentpb.ExecServerMessage_ShellArgs:
+		return "shell"
+	case *agentpb.ExecServerMessage_WriteArgs:
+		return "write"
+	case *agentpb.ExecServerMessage_DeleteArgs:
+		return "delete"
+	case *agentpb.ExecServerMessage_GrepArgs:
+		return "grep"
+	case *agentpb.ExecServerMessage_ReadArgs:
+		return "read"
+	case *agentpb.ExecServerMessage_LsArgs:
+		return "ls"
+	case *agentpb.ExecServerMessage_DiagnosticsArgs:
+		return "diagnostics"
+	case *agentpb.ExecServerMessage_RequestContextArgs:
+		return "requestContext"
+	case *agentpb.ExecServerMessage_McpArgs:
+		return "mcp"
+	case *agentpb.ExecServerMessage_ShellStreamArgs:
+		return "shellStream"
+	case *agentpb.ExecServerMessage_BackgroundShellSpawnArgs:
+		return "backgroundShellSpawn"
+	case *agentpb.ExecServerMessage_ListMcpResourcesExecArgs:
+		return "listMcpResources"
+	case *agentpb.ExecServerMessage_ReadMcpResourceExecArgs:
+		return "readMcpResource"
+	case *agentpb.ExecServerMessage_FetchArgs:
+		return "fetch"
+	case *agentpb.ExecServerMessage_RecordScreenArgs:
+		return "recordScreen"
+	case *agentpb.ExecServerMessage_ComputerUseArgs:
+		return "computerUse"
+	case *agentpb.ExecServerMessage_WriteShellStdinArgs:
+		return "writeShellStdin"
+	default:
+		return "unknown"
+	}
 }
 
 func processServer(
@@ -220,7 +288,7 @@ func processServer(
 	}
 	if exec := msg.GetExecServerMessage(); exec != nil {
 		if !handleExec(exec, mcpTools, bridge, onMcp) {
-			onProtocolError("Unsupported Cursor exec message")
+			onProtocolError("Unsupported Cursor exec message: " + execKind(exec))
 		}
 		return
 	}

@@ -699,3 +699,23 @@ func TestResumeToolsLateProtocolErrorDoesNotPanic(t *testing.T) {
 		},
 	}), 0))
 }
+
+func TestHandleExecRejectsNewCursorTools(t *testing.T) {
+	var wrote [][]byte
+	bridge := &Bridge{Write: func(b []byte) { wrote = append(wrote, append([]byte(nil), b...)) }, End: func() {}, Alive: func() bool { return true }}
+	cases := []*agentpb.ExecServerMessage{
+		{Id: 1, ExecId: "e1", Message: &agentpb.ExecServerMessage_ListMcpResourcesExecArgs{ListMcpResourcesExecArgs: &agentpb.ListMcpResourcesExecArgs{}}},
+		{Id: 2, ExecId: "e2", Message: &agentpb.ExecServerMessage_ReadMcpResourceExecArgs{ReadMcpResourceExecArgs: &agentpb.ReadMcpResourceExecArgs{Uri: "mcp://x"}}},
+		{Id: 3, ExecId: "e3", Message: &agentpb.ExecServerMessage_RecordScreenArgs{RecordScreenArgs: &agentpb.RecordScreenArgs{}}},
+		{Id: 4, ExecId: "e4", Message: &agentpb.ExecServerMessage_ComputerUseArgs{ComputerUseArgs: &agentpb.ComputerUseArgs{}}},
+	}
+	for _, exec := range cases {
+		wrote = nil
+		if !handleExec(exec, nil, bridge, nil) {
+			t.Fatalf("unhandled %s", execKind(exec))
+		}
+		if len(wrote) != 1 {
+			t.Fatalf("%s wrote %d", execKind(exec), len(wrote))
+		}
+	}
+}

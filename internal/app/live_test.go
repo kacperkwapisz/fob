@@ -85,6 +85,34 @@ func TestLiveCursorAndGrok(t *testing.T) {
 			}
 			c.chat(t, "gpt-5.6-terra-fast", true)
 		})
+		t.Run("cursor/sol-medium-prod", func(t *testing.T) {
+			id := "gpt-5.6-sol-medium"
+			if !c.ids[id] && !c.ids["cursor/"+id] && !c.ids["gpt-5.6-sol"] {
+				t.Skip("gpt-5.6-sol not listed")
+			}
+			if c.ids["cursor/"+id] {
+				id = "cursor/" + id
+			} else if !c.ids[id] {
+				id = "gpt-5.6-sol"
+			}
+			c.chatBody(t, map[string]any{
+				"model":  id,
+				"stream": true,
+				"messages": []any{
+					map[string]any{"role": "user", "content": "Reply with the single word pong. Do not call tools."},
+				},
+				"tools": []any{
+					map[string]any{
+						"type": "function",
+						"function": map[string]any{
+							"name":        "lookup",
+							"description": "Look something up",
+							"parameters":  map[string]any{"type": "object", "properties": map[string]any{"q": map[string]any{"type": "string"}}},
+						},
+					},
+				},
+			}, true)
+		})
 		t.Run("cursor/claude-messages", func(t *testing.T) {
 			c.messages(t, "composer-2.5", false)
 		})
