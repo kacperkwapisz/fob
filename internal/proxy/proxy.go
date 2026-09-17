@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +25,7 @@ const (
 	SettingCursorPrefix       = "cursor.prefix"
 	SettingCursorGrokFailover = "cursor.grokFailover"
 	SettingCursorListFast     = "cursor.listFast"
+	SettingLogTrace           = httpx.SettingLogTrace
 )
 
 type Fob struct {
@@ -58,13 +60,23 @@ var sticky sync.Map
 
 func Proxy(ctx context.Context, fob *Fob, req Request) (Result, error) {
 	started := time.Now().UnixMilli()
+	syncTraceMode(fob)
+	if httpx.ShouldTrace() {
+		ctx = httpx.WithTrace(ctx, httpx.NewTrace())
+	}
+	tr := httpx.TraceFrom(ctx)
 	model := requestedModel(req.Body)
+	tr.Add("inbound %s model=%s stream=%v", req.Inbound, model, req.Stream)
 	if model == "" {
 		return failOut(req, 400, httpx.KindRequest, "", "", "model is required", `set "model" in the request body`), nil
 	}
 	chain := resolveProviderChain(fob, model)
 	if len(chain) == 0 {
+		httpx.DumpTrace(ctx, true, "unknown model")
 		return failOut(req, 404, httpx.KindModel, "", model, "unknown model: "+model, "GET /v1/models for ids this instance can serve"), nil
+	}
+	for _, h := range chain {
+		tr.Add("hop %s/%s", h.Provider, h.Model)
 	}
 	if req.Key.DailyCap != nil {
 		used, err := fob.Usage.TodayTokensForKey(req.Key.ID)
@@ -155,6 +167,7 @@ func Proxy(ctx context.Context, fob *Fob, req Request) (Result, error) {
 					break
 				}
 				record(fob, req, hop.Provider, hop.Model, started, "error", 0, 0, 0, 0, "")
+				httpx.DumpTrace(ctx, true, fmt.Sprintf("%s/%s status=%d", hop.Provider, hop.Model, result.Status))
 				return failFromExec(req, hop.Provider, hop.Model, result), nil
 			}
 			sticky.Store(req.Key.ID, cred.ID)
@@ -184,8 +197,10 @@ func Proxy(ctx context.Context, fob *Fob, req Request) (Result, error) {
 					if state.Error != "" || !state.Finished {
 						status = "error"
 						logIncompleteStream(string(hop.Provider), hop.Model, route, state.Error)
+						httpx.DumpTrace(ctx, true, fmt.Sprintf("%s/%s unfinished stream", hop.Provider, hop.Model))
 					} else {
 						httpx.LogOK(string(hop.Provider), hop.Model, route)
+						httpx.DumpTrace(ctx, false, fmt.Sprintf("%s/%s ok", hop.Provider, hop.Model))
 					}
 					record(fob, req, hop.Provider, hop.Model, started, status, state.PromptTokens, state.CompletionTokens, state.CacheRead, state.CacheWrite, state.RoutedModel)
 				}()
@@ -194,6 +209,7 @@ func Proxy(ctx context.Context, fob *Fob, req Request) (Result, error) {
 			body := translate.TranslateResponse(req.Inbound, executor.Format(), hop.Model, req.Body, result.Body)
 			pt, ct, cr, cw := usageFrom(body, result.Body)
 			httpx.LogOK(string(hop.Provider), hop.Model, route)
+			httpx.DumpTrace(ctx, false, fmt.Sprintf("%s/%s ok", hop.Provider, hop.Model))
 			record(fob, req, hop.Provider, hop.Model, started, "ok", pt, ct, cr, cw, routedModel(body, result.Body))
 			return Result{OK: true, Status: 200, Body: body}, nil
 		}
@@ -215,6 +231,7 @@ func Proxy(ctx context.Context, fob *Fob, req Request) (Result, error) {
 		}
 	}
 	record(fob, req, lastHop.Provider, lastHop.Model, started, "error", 0, 0, 0, 0, "")
+	httpx.DumpTrace(ctx, true, fmt.Sprintf("%s/%s status=%d", lastHop.Provider, lastHop.Model, last.Status))
 	return failFromExec(req, lastHop.Provider, lastHop.Model, last), nil
 }
 
@@ -481,6 +498,16 @@ func settingOnByDefault(fob *Fob, key string) bool {
 		return true
 	}
 	return v != "0"
+}
+
+func syncTraceMode(fob *Fob) {
+	mode := httpx.TraceOff
+	if fob != nil && fob.Settings != nil {
+		if v, ok := fob.Settings.Get(SettingLogTrace); ok {
+			mode = v
+		}
+	}
+	httpx.SetTraceMode(mode)
 }
 
 func requestedModel(body any) string {

@@ -1,6 +1,7 @@
 package cursor
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"strconv"
@@ -8,6 +9,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	"github.com/kacperkwapisz/fob/internal/httpx"
 	"github.com/kacperkwapisz/fob/internal/provider/cursor/agentpb"
 )
 
@@ -306,6 +308,7 @@ func skipWire(b []byte, wire int) (consumed int, n int) {
 }
 
 func processServer(
+	ctx context.Context,
 	msg *agentpb.AgentServerMessage,
 	blobStore map[string][]byte,
 	mcpTools []*agentpb.McpToolDefinition,
@@ -344,8 +347,12 @@ func processServer(
 		return
 	}
 	if exec := msg.GetExecServerMessage(); exec != nil {
+		kind := execKind(exec)
 		if !handleExec(exec, mcpTools, bridge, onMcp) {
-			throwExec(bridge, exec, rejectReason+": "+execKind(exec))
+			httpx.TraceFrom(ctx).Add("cursor exec unhandled=%s id=%s", kind, exec.GetExecId())
+			throwExec(bridge, exec, rejectReason+": "+kind)
+		} else {
+			httpx.TraceFrom(ctx).Add("cursor exec %s id=%s", kind, exec.GetExecId())
 		}
 		return
 	}

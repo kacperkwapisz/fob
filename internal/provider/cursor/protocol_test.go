@@ -380,7 +380,7 @@ func TestComputeUsageIncludesRoutedModel(t *testing.T) {
 
 func TestProcessServerCapturesRoutedModel(t *testing.T) {
 	state := &streamProtoState{}
-	processServer(&agentpb.AgentServerMessage{
+	processServer(context.Background(), &agentpb.AgentServerMessage{
 		Message: &agentpb.AgentServerMessage_InteractionUpdate{
 			InteractionUpdate: &agentpb.InteractionUpdate{
 				Message: &agentpb.InteractionUpdate_RoutedModel{
@@ -392,7 +392,7 @@ func TestProcessServerCapturesRoutedModel(t *testing.T) {
 	if state.routedID != "composer-2.5" {
 		t.Fatalf("routedID=%q", state.routedID)
 	}
-	processServer(&agentpb.AgentServerMessage{
+	processServer(context.Background(), &agentpb.AgentServerMessage{
 		Message: &agentpb.AgentServerMessage_InteractionUpdate{
 			InteractionUpdate: &agentpb.InteractionUpdate{
 				Message: &agentpb.InteractionUpdate_RoutedModel{
@@ -736,7 +736,7 @@ func TestUnknownExecThrowsInsteadOfProtocolError(t *testing.T) {
 	if execKind(exec) == "unknown" {
 		t.Fatalf("kind %s", execKind(exec))
 	}
-	processServer(&agentpb.AgentServerMessage{
+	processServer(context.Background(), &agentpb.AgentServerMessage{
 		Message: &agentpb.AgentServerMessage_ExecServerMessage{ExecServerMessage: exec},
 	}, map[string][]byte{}, nil, bridge, &streamProtoState{}, nil, nil, nil, func(msg string) {
 		errs = append(errs, msg)

@@ -62,6 +62,9 @@ func Create(source map[string]string) (*Booted, error) {
 		},
 	}
 	httpx.SetLogLevel(string(e.LogLevel))
+	if v, ok := settings.Get(proxy.SettingLogTrace); ok {
+		httpx.SetTraceMode(v)
+	}
 	logins := oauth.Logins(e)
 	mux := httpx.NewMux()
 	registerHealth(mux)

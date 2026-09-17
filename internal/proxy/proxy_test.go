@@ -431,6 +431,57 @@ func TestCursorStreamLogsProviderError(t *testing.T) {
 	}
 }
 
+func TestTraceDumpsOnFailureOnly(t *testing.T) {
+	var buf bytes.Buffer
+	defer httpx.SetLogOutput(&buf)()
+	httpx.SetLogLevel("info")
+	defer httpx.SetTraceMode(httpx.TraceOff)
+
+	ch := make(chan any, 2)
+	go func() {
+		defer close(ch)
+		ch <- map[string]any{
+			"id": "chatcmpl_1", "object": "chat.completion.chunk", "model": "gpt-5.6-terra-medium",
+			"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"content": "hi"}, "finish_reason": nil}},
+		}
+		ch <- map[string]any{
+			"id": "chatcmpl_1", "object": "chat.completion.chunk", "model": "gpt-5.6-terra-medium",
+			"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}},
+		}
+	}()
+	fob, d := testFob(t, map[domain.ProviderID]provider.Executor{
+		domain.ProviderCursor: fakeExec{
+			id: domain.ProviderCursor, format: domain.FormatCursor,
+			models: []domain.ModelInfo{{ID: "gpt-5.6-terra-medium", Object: "model", OwnedBy: "cursor"}},
+			fn: func(domain.Credential) provider.ExecuteResult {
+				return provider.ExecuteResult{OK: true, Status: 200, Stream: ch}
+			},
+		},
+	})
+	defer d.Close()
+	_ = fob.Settings.Set(SettingLogTrace, httpx.TraceErrors)
+	_, _ = fob.Vault.Save(store.SaveCredential{ID: "c1", Provider: domain.ProviderCursor, Label: "Cursor", Tokens: domain.CredentialTokens{AccessToken: "t", Extra: map[string]any{"kind": "oauth"}}})
+	created, err := fob.Keys.Create("t", nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _ := fob.Keys.Verify(created.Secret)
+	result, err := Proxy(context.Background(), fob, Request{
+		Inbound: domain.InboundOpenAIChat,
+		Body:    map[string]any{"model": "gpt-5.6-terra-medium", "messages": []any{map[string]any{"role": "user", "content": "hi"}}},
+		Key:     *key,
+		Stream:  true,
+	})
+	if err != nil || !result.OK {
+		t.Fatalf("%+v %v", result, err)
+	}
+	for range result.Stream {
+	}
+	if strings.Contains(buf.String(), "fob trace") {
+		t.Fatalf("success dumped %q", buf.String())
+	}
+}
+
 func TestKeepaliveRefreshesExpiredCredentialWithoutTraffic(t *testing.T) {
 	refreshed := 0
 	fob, d := testFob(t, map[domain.ProviderID]provider.Executor{
@@ -757,7 +808,6 @@ func TestUnprefixedGPTStillHitsCodexWithOpenAISource(t *testing.T) {
 		t.Fatalf("seen %v", seen)
 	}
 }
-
 
 func AsMap(v any) map[string]any {
 	m, _ := v.(map[string]any)

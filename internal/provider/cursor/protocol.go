@@ -11,6 +11,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	"github.com/kacperkwapisz/fob/internal/httpx"
 	"github.com/kacperkwapisz/fob/internal/provider"
 	"github.com/kacperkwapisz/fob/internal/provider/cursor/agentpb"
 	"github.com/kacperkwapisz/fob/internal/translate"
@@ -338,10 +339,12 @@ func RunChat(ctx context.Context, accessToken string, body map[string]any, strea
 	messages := messagesFromBody(body)
 	parsed := ParseMessages(messages)
 	fastFlag, hasFastFlag := body["fast"].(bool)
-	modelID := resolveModelID(translate.AsStr(body["model"]), translate.AsStr(body["reasoning_effort"]))
+	requested := translate.AsStr(body["model"])
+	modelID := resolveModelID(requested, translate.AsStr(body["reasoning_effort"]))
 	if hasFastFlag {
-		modelID = resolveModelID(translate.AsStr(body["model"]), translate.AsStr(body["reasoning_effort"]), fastFlag)
+		modelID = resolveModelID(requested, translate.AsStr(body["reasoning_effort"]), fastFlag)
 	}
+	httpx.TraceFrom(ctx).Add("cursor requested=%s wire=%s effort=%s fast=%v tools=%d", requested, modelID, translate.AsStr(body["reasoning_effort"]), hasFastFlag && fastFlag, len(translate.AsArr(body["tools"])))
 	if parsed.UserText == "" && len(parsed.ToolResults) == 0 {
 		return ChatResult{Status: 400, Body: map[string]any{"error": map[string]any{"message": "No user message found", "type": "invalid_request_error"}}, Message: "No user message found"}, nil
 	}
@@ -395,6 +398,11 @@ func RunChat(ctx context.Context, accessToken string, body map[string]any, strea
 		stored.resumeRequestHash = ""
 		stored.blobStore = map[string][]byte{}
 	}
+	sel := selectionFromBody(body)
+	httpx.TraceFrom(ctx).Add("cursor conv=%s resume=%v checkpoint=%v", stored.conversationID, resume, len(stored.checkpoint) > 0)
+	if sel != nil {
+		httpx.TraceFrom(ctx).Add("cursor requestedModel=%s params=%v", sel.ModelID, sel.Parameters)
+	}
 	var images []ImagePart
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role == "user" {
@@ -402,7 +410,7 @@ func RunChat(ctx context.Context, accessToken string, body map[string]any, strea
 			break
 		}
 	}
-	payload := buildCursorRequest(modelID, parsed.SystemPrompt, userText, parsed.Turns, stored.conversationID, stored.checkpoint, stored.blobStore, selectionFromBody(body), mcpTools, resume, images)
+	payload := buildCursorRequest(modelID, parsed.SystemPrompt, userText, parsed.Turns, stored.conversationID, stored.checkpoint, stored.blobStore, sel, mcpTools, resume, images)
 	current := &ParsedTurn{UserText: userText}
 	return runStream(ctx, accessToken, payload, modelID, bridgeKey, convKey, current, stream, hash, client)
 }
@@ -502,7 +510,7 @@ func runStream(ctx context.Context, accessToken string, payload requestPayload, 
 			if err := proto.Unmarshal(msg, &server); err != nil {
 				return
 			}
-			processServer(&server, payload.blobStore, payload.mcpTools, bridge, state,
+			processServer(ctx, &server, payload.blobStore, payload.mcpTools, bridge, state,
 				func(text string, thinking bool) {
 					if thinking {
 						emit(map[string]any{"reasoning_content": text}, nil)
@@ -755,7 +763,7 @@ func resumeTools(ctx context.Context, active *activeBridge, parsed ParsedMessage
 			if proto.Unmarshal(msg, &server) != nil {
 				return
 			}
-			processServer(&server, active.blobStore, active.mcpTools, active.bridge, state,
+			processServer(ctx, &server, active.blobStore, active.mcpTools, active.bridge, state,
 				func(text string, thinking bool) {
 					if thinking {
 						emit(map[string]any{"reasoning_content": text}, nil)

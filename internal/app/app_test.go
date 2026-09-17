@@ -454,7 +454,7 @@ func TestCursorSettingsURLEncoded(t *testing.T) {
 	if !strings.Contains(page.Body.String(), `name="list_fast" value="1" checked`) {
 		t.Fatal("list_fast should default on")
 	}
-	post(url.Values{"prefix": {"1"}, "grok_failover": {"1"}, "list_fast": {"1"}})
+	post(url.Values{"prefix": {"1"}, "grok_failover": {"1"}, "list_fast": {"1"}, "log_trace": {"errors"}})
 	if v, _ := booted.Fob.Settings.Get(proxy.SettingCursorPrefix); v != "1" {
 		t.Fatalf("prefix %q", v)
 	}
@@ -463,6 +463,12 @@ func TestCursorSettingsURLEncoded(t *testing.T) {
 	}
 	if v, _ := booted.Fob.Settings.Get(proxy.SettingCursorGrokFailover); v != "1" {
 		t.Fatalf("grok %q", v)
+	}
+	if v, _ := booted.Fob.Settings.Get(proxy.SettingLogTrace); v != "errors" {
+		t.Fatalf("trace %q", v)
+	}
+	if httpx.TraceMode() != httpx.TraceErrors {
+		t.Fatalf("trace mode %q", httpx.TraceMode())
 	}
 	page = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/", nil)

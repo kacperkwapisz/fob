@@ -269,9 +269,17 @@ func registerPanel(mux *httpx.Mux, fob *proxy.Fob, e *env.Env, panelAuth *store.
 		if httpx.FormString(body, "grok_failover") == "1" {
 			grok = "1"
 		}
+		trace := httpx.FormString(body, "log_trace")
+		switch trace {
+		case httpx.TraceAlways, httpx.TraceErrors, httpx.TraceOff:
+		default:
+			trace = httpx.TraceOff
+		}
 		_ = settings.Set(proxy.SettingCursorPrefix, prefix)
 		_ = settings.Set(proxy.SettingCursorListFast, listFast)
 		_ = settings.Set(proxy.SettingCursorGrokFailover, grok)
+		_ = settings.Set(proxy.SettingLogTrace, trace)
+		httpx.SetTraceMode(trace)
 		httpx.SeeOther(w, "/", "")
 	})
 	mux.Handle(http.MethodPost, "/credentials/{id}/delete", func(w http.ResponseWriter, r *http.Request) {
@@ -346,6 +354,7 @@ func dashboard(fob *proxy.Fob, settings *store.SettingsStore) string {
 	prefix, _ := settings.Get(proxy.SettingCursorPrefix)
 	listFast, listFastSet := settings.Get(proxy.SettingCursorListFast)
 	grok, _ := settings.Get(proxy.SettingCursorGrokFailover)
+	trace, _ := settings.Get(proxy.SettingLogTrace)
 	subN := 0
 	var sources []panel.SourceProps
 	for _, c := range creds {
@@ -368,7 +377,7 @@ func dashboard(fob *proxy.Fob, settings *store.SettingsStore) string {
 			Today: today, D7: d7, ByProvider: byProvider, ByModel: byModel, Daily: daily, Trends: trends,
 		},
 		SubCount: subN,
-		Settings: panel.SettingsProps{CursorPrefix: prefix == "1", CursorListFast: !listFastSet || listFast != "0", GrokFailover: grok == "1"},
+		Settings: panel.SettingsProps{CursorPrefix: prefix == "1", CursorListFast: !listFastSet || listFast != "0", GrokFailover: grok == "1", LogTrace: trace},
 		Sources:  sources,
 	})
 }

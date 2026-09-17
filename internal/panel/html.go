@@ -42,6 +42,7 @@ type SettingsProps struct {
 	CursorPrefix   bool
 	GrokFailover   bool
 	CursorListFast bool
+	LogTrace       string
 }
 
 func Layout(title, meta, body string) string {
@@ -495,6 +496,16 @@ func cursorSettingsCard(settings SettingsProps) string {
 	if settings.GrokFailover {
 		grok = "checked"
 	}
+	trace := settings.LogTrace
+	if trace == "" {
+		trace = "off"
+	}
+	sel := func(v string) string {
+		if trace == v {
+			return "selected"
+		}
+		return ""
+	}
 	return fmt.Sprintf(`<section class="card card-settings">
       <div class="card-head">
         <h2>Cursor</h2>
@@ -522,9 +533,18 @@ func cursorSettingsCard(settings SettingsProps) string {
           </span>
           <input class="switch" type="checkbox" name="grok_failover" value="1" %s />
         </label>
+        <label class="field">
+          <span>Request trace</span>
+          <select name="log_trace">
+            <option value="off" %s>Off</option>
+            <option value="errors" %s>On failure</option>
+            <option value="always" %s>Always</option>
+          </select>
+          <span class="lede">Failure dumps include Cursor wire id, conversation, resume, and exec kinds. No tokens.</span>
+        </label>
         <button class="btn js-hide" type="submit">Save</button>
       </form>
-    </section>`, fast, prefix, grok)
+    </section>`, fast, prefix, grok, sel("off"), sel("errors"), sel("always"))
 }
 
 func gate(title, lede, err, form string) string {
