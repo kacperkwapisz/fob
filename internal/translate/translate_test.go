@@ -383,6 +383,274 @@ func TestFlattenCodexMultiAgentStripsCollabEncryption(t *testing.T) {
 	}
 }
 
+func TestCursorThinkingToResponsesAndClaude(t *testing.T) {
+	chunk := map[string]any{
+		"id": "chatcmpl_1", "object": "chat.completion.chunk", "model": "composer-2.5",
+		"choices": []any{map[string]any{"index": 0, "delta": ChatReasoningDelta("plan it"), "finish_reason": nil}},
+	}
+	text := map[string]any{
+		"id": "chatcmpl_1", "object": "chat.completion.chunk", "model": "composer-2.5",
+		"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"content": "ok"}, "finish_reason": nil}},
+	}
+
+	respState := EmptyStreamState()
+	think := TranslateStream(domain.InboundOpenAIResponses, domain.FormatCursor, "composer-2.5", map[string]any{}, chunk, &respState)
+	if !containsSub(think, `"type":"response.reasoning_summary_text.delta"`) || !containsSub(think, "plan it") {
+		t.Fatalf("responses summary %v", think)
+	}
+	if !containsSub(think, `"type":"response.reasoning_text.delta"`) {
+		t.Fatalf("responses text %v", think)
+	}
+	out := TranslateStream(domain.InboundOpenAIResponses, domain.FormatCursor, "composer-2.5", map[string]any{}, text, &respState)
+	if !containsSub(out, `"type":"response.output_text.delta"`) || !containsSub(out, "ok") {
+		t.Fatalf("responses content %v", out)
+	}
+
+	claudeState := EmptyStreamState()
+	think = TranslateStream(domain.InboundClaudeMessages, domain.FormatCursor, "composer-2.5", map[string]any{}, chunk, &claudeState)
+	if !containsSub(think, `"type":"thinking"`) || !containsSub(think, `"type":"thinking_delta"`) || !containsSub(think, "plan it") {
+		t.Fatalf("claude thinking %v", think)
+	}
+	out = TranslateStream(domain.InboundClaudeMessages, domain.FormatCursor, "composer-2.5", map[string]any{}, text, &claudeState)
+	if !containsSub(out, `"type":"text_delta"`) || !containsSub(out, "ok") {
+		t.Fatalf("claude text %v", out)
+	}
+
+	completed := TranslateResponse(domain.InboundOpenAIResponses, domain.FormatCursor, "composer-2.5", map[string]any{}, map[string]any{
+		"id": "chatcmpl_1", "object": "chat.completion",
+		"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": "ok", "reasoning_content": "plan it"}, "finish_reason": "stop"}},
+	})
+	items := AsArr(AsMap(completed)["output"])
+	if len(items) < 2 || AsStr(AsMap(items[0])["type"]) != "reasoning" {
+		t.Fatalf("responses output %+v", completed)
+	}
+	if flattenText(firstNonNil(AsMap(items[0])["summary"], AsMap(items[0])["content"])) != "plan it" {
+		t.Fatalf("responses reasoning %+v", items[0])
+	}
+
+	claude := AsMap(TranslateResponse(domain.InboundClaudeMessages, domain.FormatCursor, "composer-2.5", map[string]any{}, map[string]any{
+		"id": "chatcmpl_1", "object": "chat.completion",
+		"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": "ok", "reasoning": "plan it"}, "finish_reason": "stop"}},
+	}))
+	blocks := AsArr(claude["content"])
+	if len(blocks) < 2 || AsStr(AsMap(blocks[0])["type"]) != "thinking" || AsStr(AsMap(blocks[0])["thinking"]) != "plan it" {
+		t.Fatalf("claude content %+v", claude)
+	}
+}
+
+func TestClaudeThinkingStreamToResponsesAndChat(t *testing.T) {
+	state := EmptyStreamState()
+	TranslateStream(domain.InboundOpenAIResponses, domain.FormatClaude, "claude-opus-4-7", map[string]any{}, map[string]any{
+		"type": "message_start", "message": map[string]any{"id": "msg_1"},
+	}, &state)
+	think := TranslateStream(domain.InboundOpenAIResponses, domain.FormatClaude, "claude-opus-4-7", map[string]any{}, map[string]any{
+		"type": "content_block_delta", "delta": map[string]any{"type": "thinking_delta", "thinking": "hmm"},
+	}, &state)
+	if !containsSub(think, `"type":"response.reasoning_summary_text.delta"`) || !containsSub(think, "hmm") {
+		t.Fatalf("%v", think)
+	}
+
+	chatState := EmptyStreamState()
+	TranslateStream(domain.InboundOpenAIChat, domain.FormatClaude, "claude-opus-4-7", map[string]any{}, map[string]any{
+		"type": "message_start", "message": map[string]any{"id": "msg_1"},
+	}, &chatState)
+	chat := TranslateStream(domain.InboundOpenAIChat, domain.FormatClaude, "claude-opus-4-7", map[string]any{}, map[string]any{
+		"type": "content_block_delta", "delta": map[string]any{"type": "thinking_delta", "thinking": "hmm"},
+	}, &chatState)
+	if !containsSub(chat, `"reasoning_content":"hmm"`) || !containsSub(chat, `"reasoning":"hmm"`) {
+		t.Fatalf("%v", chat)
+	}
+}
+
+func TestCodexReasoningTextToChatAndClaude(t *testing.T) {
+	chatState := EmptyStreamState()
+	TranslateStream(domain.InboundOpenAIChat, domain.FormatGrok, "grok-4.6", map[string]any{}, map[string]any{
+		"type": "response.created", "response": map[string]any{"id": "resp_1"},
+	}, &chatState)
+	chat := TranslateStream(domain.InboundOpenAIChat, domain.FormatGrok, "grok-4.6", map[string]any{}, map[string]any{
+		"type": "response.reasoning_text.delta", "delta": "hmm",
+	}, &chatState)
+	if !containsSub(chat, `"reasoning_content":"hmm"`) || !containsSub(chat, `"reasoning":"hmm"`) {
+		t.Fatalf("%v", chat)
+	}
+
+	claudeState := EmptyStreamState()
+	TranslateStream(domain.InboundClaudeMessages, domain.FormatGrok, "grok-4.6", map[string]any{}, map[string]any{
+		"type": "response.created", "response": map[string]any{"id": "resp_1"},
+	}, &claudeState)
+	think := TranslateStream(domain.InboundClaudeMessages, domain.FormatGrok, "grok-4.6", map[string]any{}, map[string]any{
+		"type": "response.reasoning_summary_text.delta", "delta": "hmm",
+	}, &claudeState)
+	if !containsSub(think, `"type":"thinking_delta"`) || !containsSub(think, "hmm") {
+		t.Fatalf("%v", think)
+	}
+}
+
+func TestOpenAIChatHTTPImageToClaude(t *testing.T) {
+	out := TranslateRequest(domain.InboundOpenAIChat, domain.FormatClaude, "claude-opus-4-7", false, map[string]any{
+		"model": "claude-opus-4-7",
+		"messages": []any{map[string]any{"role": "user", "content": []any{
+			map[string]any{"type": "text", "text": "what is this"},
+			map[string]any{"type": "image_url", "image_url": map[string]any{"url": "https://example.com/cat.jpg"}},
+		}}},
+	})
+	msg := AsMap(AsArr(AsMap(out.Body)["messages"])[0])
+	blocks := AsArr(msg["content"])
+	if len(blocks) != 2 {
+		t.Fatalf("%+v", out.Body)
+	}
+	src := AsMap(AsMap(blocks[1])["source"])
+	if AsStr(src["type"]) != "url" || AsStr(src["url"]) != "https://example.com/cat.jpg" {
+		t.Fatalf("source %+v", src)
+	}
+
+	back := claudeContentToOpenai([]any{map[string]any{"type": "image", "source": map[string]any{"type": "url", "url": "https://example.com/cat.jpg"}}})
+	part := AsMap(AsArr(back["content"])[0])
+	if AsStr(AsMap(part["image_url"])["url"]) != "https://example.com/cat.jpg" {
+		t.Fatalf("roundtrip %+v", back)
+	}
+}
+
+func TestOpenAIChatReasoningContentToClaude(t *testing.T) {
+	out := TranslateRequest(domain.InboundOpenAIChat, domain.FormatClaude, "claude-opus-4-7", false, map[string]any{
+		"model": "claude-opus-4-7",
+		"messages": []any{map[string]any{
+			"role": "assistant", "content": "ok", "reasoning_content": "plan it",
+		}},
+	})
+	msg := AsMap(AsArr(AsMap(out.Body)["messages"])[0])
+	blocks := AsArr(msg["content"])
+	if len(blocks) < 2 || AsStr(AsMap(blocks[0])["type"]) != "thinking" || AsStr(AsMap(blocks[0])["thinking"]) != "plan it" {
+		t.Fatalf("%+v", out.Body)
+	}
+}
+
+func TestCursorToolsToResponsesAndClaude(t *testing.T) {
+	chunk := map[string]any{
+		"id": "chatcmpl_1", "object": "chat.completion.chunk", "model": "composer-2.5",
+		"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"tool_calls": []any{map[string]any{
+			"index": 0, "id": "c1", "type": "function",
+			"function": map[string]any{"name": "lookup", "arguments": `{"q":"x"}`},
+		}}}, "finish_reason": nil}},
+	}
+	done := map[string]any{
+		"id": "chatcmpl_1", "object": "chat.completion.chunk", "model": "composer-2.5",
+		"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "tool_calls"}},
+		"usage":   map[string]any{"prompt_tokens": 4.0, "completion_tokens": 2.0, "prompt_tokens_details": map[string]any{"cached_tokens": 1.0}, "completion_tokens_details": map[string]any{"reasoning_tokens": 3.0}},
+	}
+
+	respState := EmptyStreamState()
+	added := TranslateStream(domain.InboundOpenAIResponses, domain.FormatCursor, "composer-2.5", map[string]any{}, chunk, &respState)
+	if !containsSub(added, `"type":"response.output_item.added"`) || !containsSub(added, "lookup") {
+		t.Fatalf("added %v", added)
+	}
+	if !containsSub(added, `"type":"response.function_call_arguments.delta"`) || !containsSub(added, `\"q\":\"x\"`) {
+		t.Fatalf("args %v", added)
+	}
+	fin := TranslateStream(domain.InboundOpenAIResponses, domain.FormatCursor, "composer-2.5", map[string]any{}, done, &respState)
+	if !containsSub(fin, `"type":"response.completed"`) || !containsSub(fin, `"call_id":"c1"`) {
+		t.Fatalf("completed %v", fin)
+	}
+	if !containsSub(fin, `"input_tokens":4`) || !containsSub(fin, `"reasoning_tokens":3`) {
+		t.Fatalf("usage %v", fin)
+	}
+
+	claudeState := EmptyStreamState()
+	start := TranslateStream(domain.InboundClaudeMessages, domain.FormatCursor, "composer-2.5", map[string]any{}, chunk, &claudeState)
+	if !containsSub(start, `"type":"tool_use"`) || !containsSub(start, `"type":"input_json_delta"`) {
+		t.Fatalf("claude tool %v", start)
+	}
+	stop := TranslateStream(domain.InboundClaudeMessages, domain.FormatCursor, "composer-2.5", map[string]any{}, done, &claudeState)
+	if !containsSub(stop, `"stop_reason":"tool_use"`) || !containsSub(stop, `"output_tokens":2`) {
+		t.Fatalf("claude stop %v", stop)
+	}
+}
+
+func TestClaudeAndCodexToolsStream(t *testing.T) {
+	respState := EmptyStreamState()
+	TranslateStream(domain.InboundOpenAIResponses, domain.FormatClaude, "claude-opus-4-7", map[string]any{}, map[string]any{
+		"type": "message_start", "message": map[string]any{"id": "msg_1", "usage": map[string]any{"input_tokens": 5.0}},
+	}, &respState)
+	added := TranslateStream(domain.InboundOpenAIResponses, domain.FormatClaude, "claude-opus-4-7", map[string]any{}, map[string]any{
+		"type": "content_block_start", "content_block": map[string]any{"type": "tool_use", "id": "t1", "name": "lookup"},
+	}, &respState)
+	if !containsSub(added, `"type":"response.output_item.added"`) || !containsSub(added, "lookup") {
+		t.Fatalf("%v", added)
+	}
+	args := TranslateStream(domain.InboundOpenAIResponses, domain.FormatClaude, "claude-opus-4-7", map[string]any{}, map[string]any{
+		"type": "content_block_delta", "delta": map[string]any{"type": "input_json_delta", "partial_json": `{"q":`},
+	}, &respState)
+	if !containsSub(args, `"type":"response.function_call_arguments.delta"`) {
+		t.Fatalf("%v", args)
+	}
+
+	claudeState := EmptyStreamState()
+	TranslateStream(domain.InboundClaudeMessages, domain.FormatGrok, "grok-4.6", map[string]any{}, map[string]any{
+		"type": "response.created", "response": map[string]any{"id": "resp_1"},
+	}, &claudeState)
+	tool := TranslateStream(domain.InboundClaudeMessages, domain.FormatGrok, "grok-4.6", map[string]any{}, map[string]any{
+		"type": "response.output_item.added", "item": map[string]any{"type": "function_call", "call_id": "c1", "name": "lookup"},
+	}, &claudeState)
+	if !containsSub(tool, `"type":"tool_use"`) || !containsSub(tool, "lookup") {
+		t.Fatalf("%v", tool)
+	}
+	delta := TranslateStream(domain.InboundClaudeMessages, domain.FormatGrok, "grok-4.6", map[string]any{}, map[string]any{
+		"type": "response.function_call_arguments.delta", "delta": `{"q":"x"}`,
+	}, &claudeState)
+	if !containsSub(delta, `"type":"input_json_delta"`) {
+		t.Fatalf("%v", delta)
+	}
+	done := TranslateStream(domain.InboundClaudeMessages, domain.FormatGrok, "grok-4.6", map[string]any{}, map[string]any{
+		"type": "response.completed", "response": map[string]any{"id": "resp_1", "output": []any{}, "usage": map[string]any{"input_tokens": 2.0, "output_tokens": 1.0}},
+	}, &claudeState)
+	if !containsSub(done, `"stop_reason":"tool_use"`) {
+		t.Fatalf("%v", done)
+	}
+}
+
+func TestResponsesRequestKeepsReasoningAndToolChoice(t *testing.T) {
+	out := TranslateRequest(domain.InboundOpenAIResponses, domain.FormatCursor, "composer-2.5", false, map[string]any{
+		"model": "composer-2.5",
+		"input": []any{
+			map[string]any{"type": "reasoning", "summary": []any{map[string]any{"type": "summary_text", "text": "plan"}}},
+			map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "hi"}}},
+		},
+		"tools":             []any{map[string]any{"type": "function", "name": "lookup", "parameters": map[string]any{"type": "object"}}},
+		"tool_choice":       map[string]any{"type": "function", "name": "lookup"},
+		"reasoning":         map[string]any{"effort": "high"},
+		"max_output_tokens": 1024.0,
+	})
+	body := AsMap(out.Body)
+	if AsStr(body["reasoning_effort"]) != "high" || numOf(body["max_tokens"]) != 1024 {
+		t.Fatalf("%+v", body)
+	}
+	choice := AsMap(body["tool_choice"])
+	if AsStr(AsMap(choice["function"])["name"]) != "lookup" {
+		t.Fatalf("tool_choice %+v", body["tool_choice"])
+	}
+	var sawReasoning bool
+	for _, raw := range AsArr(body["messages"]) {
+		m := AsMap(raw)
+		if MessageReasoning(m) == "plan" {
+			sawReasoning = true
+		}
+	}
+	if !sawReasoning {
+		t.Fatalf("messages %+v", body["messages"])
+	}
+
+	claude := TranslateRequest(domain.InboundOpenAIChat, domain.FormatClaude, "claude-opus-4-7", false, map[string]any{
+		"model":       "claude-opus-4-7",
+		"messages":    []any{map[string]any{"role": "user", "content": "hi"}},
+		"tools":       []any{map[string]any{"type": "function", "function": map[string]any{"name": "lookup", "parameters": map[string]any{"type": "object"}}}},
+		"tool_choice": map[string]any{"type": "function", "function": map[string]any{"name": "lookup"}},
+	})
+	tc := AsMap(AsMap(claude.Body)["tool_choice"])
+	if AsStr(tc["type"]) != "tool" || AsStr(tc["name"]) != "lookup" {
+		t.Fatalf("%+v", claude.Body)
+	}
+}
+
 func TestCursorStreamMarksFinishedOnStop(t *testing.T) {
 	state := EmptyStreamState()
 	TranslateStream(domain.InboundOpenAIChat, domain.FormatCursor, "gpt-5.6-terra-medium", map[string]any{}, map[string]any{
@@ -434,6 +702,15 @@ func golden(t *testing.T, name string) string {
 func contains(ss []string, want string) bool {
 	for _, s := range ss {
 		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsSub(ss []string, want string) bool {
+	for _, s := range ss {
+		if strings.Contains(s, want) {
 			return true
 		}
 	}

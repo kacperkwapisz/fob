@@ -369,9 +369,101 @@ func processServer(
 		}
 		return
 	}
-	if msg.GetInteractionQuery() != nil {
-		onProtocolError("Unsupported Cursor server message: interactionQuery")
+	if q := msg.GetInteractionQuery(); q != nil {
+		kind := queryKind(q)
+		httpx.TraceFrom(ctx).Add("cursor query %s id=%d", kind, q.GetId())
+		handleInteractionQuery(q, bridge)
+		return
 	}
+}
+
+func sendInteraction(bridge *Bridge, resp *agentpb.InteractionResponse) {
+	sendClient(bridge, &agentpb.AgentClientMessage{
+		Message: &agentpb.AgentClientMessage_InteractionResponse{InteractionResponse: resp},
+	})
+}
+
+func queryKind(q *agentpb.InteractionQuery) string {
+	if q == nil {
+		return "unknown"
+	}
+	switch q.GetQuery().(type) {
+	case *agentpb.InteractionQuery_WebSearchRequestQuery:
+		return "webSearch"
+	case *agentpb.InteractionQuery_AskQuestionInteractionQuery:
+		return "askQuestion"
+	case *agentpb.InteractionQuery_SwitchModeRequestQuery:
+		return "switchMode"
+	case *agentpb.InteractionQuery_ExaSearchRequestQuery:
+		return "exaSearch"
+	case *agentpb.InteractionQuery_ExaFetchRequestQuery:
+		return "exaFetch"
+	case *agentpb.InteractionQuery_CreatePlanRequestQuery:
+		return "createPlan"
+	case *agentpb.InteractionQuery_SetupVmEnvironmentArgs:
+		return "setupVm"
+	default:
+		if fields := unknownFieldNums(q); fields != "" {
+			return "unknown(" + fields + ")"
+		}
+		return "unknown"
+	}
+}
+
+func handleInteractionQuery(q *agentpb.InteractionQuery, bridge *Bridge) {
+	if q == nil {
+		return
+	}
+	resp := &agentpb.InteractionResponse{Id: q.GetId()}
+	switch q.GetQuery().(type) {
+	case *agentpb.InteractionQuery_WebSearchRequestQuery:
+		resp.Result = &agentpb.InteractionResponse_WebSearchRequestResponse{
+			WebSearchRequestResponse: &agentpb.WebSearchRequestResponse{
+				Result: &agentpb.WebSearchRequestResponse_Approved{Approved: &agentpb.WebSearchRequestResponseApproved{}},
+			},
+		}
+	case *agentpb.InteractionQuery_ExaSearchRequestQuery:
+		resp.Result = &agentpb.InteractionResponse_ExaSearchRequestResponse{
+			ExaSearchRequestResponse: &agentpb.ExaSearchRequestResponse{
+				Result: &agentpb.ExaSearchRequestResponse_Approved{Approved: &agentpb.ExaSearchRequestResponseApproved{}},
+			},
+		}
+	case *agentpb.InteractionQuery_ExaFetchRequestQuery:
+		resp.Result = &agentpb.InteractionResponse_ExaFetchRequestResponse{
+			ExaFetchRequestResponse: &agentpb.ExaFetchRequestResponse{
+				Result: &agentpb.ExaFetchRequestResponse_Approved{Approved: &agentpb.ExaFetchRequestResponseApproved{}},
+			},
+		}
+	case *agentpb.InteractionQuery_AskQuestionInteractionQuery:
+		resp.Result = &agentpb.InteractionResponse_AskQuestionInteractionResponse{
+			AskQuestionInteractionResponse: &agentpb.AskQuestionInteractionResponse{
+				Result: &agentpb.AskQuestionResult{
+					Result: &agentpb.AskQuestionResult_Rejected{Rejected: &agentpb.AskQuestionRejected{Reason: rejectReason}},
+				},
+			},
+		}
+	case *agentpb.InteractionQuery_SwitchModeRequestQuery:
+		resp.Result = &agentpb.InteractionResponse_SwitchModeRequestResponse{
+			SwitchModeRequestResponse: &agentpb.SwitchModeRequestResponse{
+				Result: &agentpb.SwitchModeRequestResponse_Rejected{Rejected: &agentpb.SwitchModeRequestResponseRejected{Reason: rejectReason}},
+			},
+		}
+	case *agentpb.InteractionQuery_CreatePlanRequestQuery:
+		resp.Result = &agentpb.InteractionResponse_CreatePlanRequestResponse{
+			CreatePlanRequestResponse: &agentpb.CreatePlanRequestResponse{
+				Result: &agentpb.CreatePlanResult{
+					Result: &agentpb.CreatePlanResult_Success{Success: &agentpb.CreatePlanSuccess{}},
+				},
+			},
+		}
+	case *agentpb.InteractionQuery_SetupVmEnvironmentArgs:
+		resp.Result = &agentpb.InteractionResponse_SetupVmEnvironmentResult{
+			SetupVmEnvironmentResult: &agentpb.SetupVmEnvironmentResult{
+				Result: &agentpb.SetupVmEnvironmentResult_Success{Success: &agentpb.SetupVmEnvironmentSuccess{}},
+			},
+		}
+	}
+	sendInteraction(bridge, resp)
 }
 
 func readTurnUsage(te *agentpb.TurnEndedUpdate) *turnUsage {

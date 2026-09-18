@@ -23,13 +23,15 @@ func claudeToGrok(model string, stream bool, body any) RequestResult {
 		if role == "assistant" {
 			var toolCalls []any
 			var texts []any
+			var thinking string
 			parts := AsArr(content)
 			if _, ok := content.([]any); !ok {
 				parts = []any{map[string]any{"type": "text", "text": content}}
 			}
 			for _, part := range parts {
 				p := AsMap(part)
-				if AsStr(p["type"]) == "tool_use" {
+				switch AsStr(p["type"]) {
+				case "tool_use":
 					args, _ := json.Marshal(p["input"])
 					if p["input"] == nil {
 						args = []byte("{}")
@@ -38,9 +40,9 @@ func claudeToGrok(model string, stream bool, body any) RequestResult {
 						"id": AsStr(p["id"]), "type": "function",
 						"function": map[string]any{"name": AsStr(p["name"]), "arguments": string(args)},
 					})
-				} else if AsStr(p["type"]) == "thinking" {
-					continue
-				} else {
+				case "thinking":
+					thinking += AsStr(p["thinking"])
+				default:
 					texts = append(texts, p)
 				}
 			}
@@ -53,6 +55,7 @@ func claudeToGrok(model string, stream bool, body any) RequestResult {
 			if len(toolCalls) > 0 {
 				msg["tool_calls"] = toolCalls
 			}
+			ApplyChatReasoning(msg, thinking)
 			messages = append(messages, msg)
 			continue
 		}
@@ -168,11 +171,9 @@ func claudeToCodex(model string, stream bool, body any) RequestResult {
 						}
 						input = append(input, map[string]any{"type": "function_call_output", "call_id": AsStr(p["tool_use_id"]), "output": c})
 					} else if AsStr(p["type"]) == "image" {
-						source := AsMap(p["source"])
-						textParts = append(textParts, map[string]any{
-							"type":      "input_image",
-							"image_url": "data:" + AsStr(source["media_type"], "image/png") + ";base64," + AsStr(source["data"]),
-						})
+						if url := claudeImageURL(AsMap(p["source"])); url != "" {
+							textParts = append(textParts, map[string]any{"type": "input_image", "image_url": url})
+						}
 					} else {
 						textParts = append(textParts, map[string]any{"type": "input_text", "text": AsStr(p["text"])})
 					}
@@ -230,6 +231,9 @@ func grokToClaude(model string, _, upstream any) any {
 	choice := AsMap(first(AsArr(u["choices"])))
 	message := AsMap(choice["message"])
 	var content []any
+	if r := MessageReasoning(message); r != "" {
+		content = append(content, thinkingBlock(r))
+	}
 	if message["content"] != nil {
 		if s, ok := message["content"].(string); ok {
 			content = append(content, map[string]any{"type": "text", "text": s})
@@ -244,7 +248,6 @@ func grokToClaude(model string, _, upstream any) any {
 		_ = json.Unmarshal([]byte(AsStr(fn["arguments"], "{}")), &input)
 		content = append(content, map[string]any{"type": "tool_use", "id": AsStr(c["id"]), "name": AsStr(fn["name"]), "input": input})
 	}
-	usage := AsMap(u["usage"])
 	stop := "end_turn"
 	if AsStr(choice["finish_reason"]) == "tool_calls" {
 		stop = "tool_use"
@@ -255,11 +258,9 @@ func grokToClaude(model string, _, upstream any) any {
 	if id == "" {
 		id = "msg_" + itoa(nowUnix())
 	}
-	prompt, _ := AsNum(usage["prompt_tokens"])
-	completion, _ := AsNum(usage["completion_tokens"])
 	return map[string]any{
 		"id": id, "type": "message", "role": "assistant", "model": model, "content": content, "stop_reason": stop,
-		"usage": map[string]any{"input_tokens": prompt, "output_tokens": completion},
+		"usage": usageToClaude(u["usage"]),
 	}
 }
 
@@ -320,6 +321,7 @@ func claudeStreamIdentity(_ string, _ any, chunk any, _ *StreamState) []string {
 
 func grokStreamToClaude(model string, _ any, chunk any, state *StreamState) []string {
 	c := AsMap(chunk)
+	captureUsage(state, c["usage"])
 	choice := AsMap(first(AsArr(c["choices"])))
 	delta := AsMap(choice["delta"])
 	var lines []string
@@ -332,19 +334,26 @@ func grokStreamToClaude(model string, _ any, chunk any, state *StreamState) []st
 			"type":    "message_start",
 			"message": map[string]any{"id": state.ID, "type": "message", "role": "assistant", "model": model, "content": []any{}, "usage": map[string]any{"input_tokens": 0, "output_tokens": 0}},
 		}))
-		lines = append(lines, sse("content_block_start", map[string]any{"type": "content_block_start", "index": 0, "content_block": map[string]any{"type": "text", "text": ""}}))
+	}
+	if r := DeltaReasoning(delta); r != "" {
+		lines = append(lines, claudeOpenBlock(state, blockThinking)...)
+		lines = append(lines, sse("content_block_delta", map[string]any{
+			"type": "content_block_delta", "index": state.BlockIndex,
+			"delta": map[string]any{"type": "thinking_delta", "thinking": r},
+		}))
 	}
 	if s, ok := delta["content"].(string); ok && s != "" {
-		lines = append(lines, sse("content_block_delta", map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]any{"type": "text_delta", "text": s}}))
+		lines = append(lines, claudeOpenBlock(state, blockText)...)
+		lines = append(lines, sse("content_block_delta", map[string]any{
+			"type": "content_block_delta", "index": state.BlockIndex,
+			"delta": map[string]any{"type": "text_delta", "text": s},
+		}))
 	}
+	lines = append(lines, emitChatToolsToClaude(delta, state)...)
 	if choice["finish_reason"] != nil {
 		captureStreamError(state, choice)
-		stop := "end_turn"
-		if AsStr(choice["finish_reason"]) == "tool_calls" {
-			stop = "tool_use"
-		}
-		lines = append(lines, sse("content_block_stop", map[string]any{"type": "content_block_stop", "index": 0}))
-		lines = append(lines, sse("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": stop}, "usage": map[string]any{"output_tokens": 0}}))
+		lines = append(lines, claudeFinishBlocks(state)...)
+		lines = append(lines, sse("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": claudeStopReason(state, AsStr(choice["finish_reason"]))}, "usage": claudeUsageFromState(state)}))
 		lines = append(lines, sse("message_stop", map[string]any{"type": "message_stop"}))
 		if AsStr(choice["finish_reason"]) != "error" {
 			state.Finished = true
@@ -366,13 +375,28 @@ func codexStreamToClaude(model string, _ any, chunk any, state *StreamState) []s
 			"type":    "message_start",
 			"message": map[string]any{"id": state.ID, "type": "message", "role": "assistant", "model": model, "content": []any{}, "usage": map[string]any{"input_tokens": 0, "output_tokens": 0}},
 		}))
-		lines = append(lines, sse("content_block_start", map[string]any{"type": "content_block_start", "index": 0, "content_block": map[string]any{"type": "text", "text": ""}}))
+	} else if isResponsesReasoningDelta(typ) {
+		if text := AsStr(ev["delta"]); text != "" {
+			lines = append(lines, claudeOpenBlock(state, blockThinking)...)
+			lines = append(lines, sse("content_block_delta", map[string]any{
+				"type": "content_block_delta", "index": state.BlockIndex,
+				"delta": map[string]any{"type": "thinking_delta", "thinking": text},
+			}))
+		}
 	} else if typ == "response.output_text.delta" {
-		lines = append(lines, sse("content_block_delta", map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]any{"type": "text_delta", "text": AsStr(ev["delta"])}}))
+		lines = append(lines, claudeOpenBlock(state, blockText)...)
+		lines = append(lines, sse("content_block_delta", map[string]any{
+			"type": "content_block_delta", "index": state.BlockIndex,
+			"delta": map[string]any{"type": "text_delta", "text": AsStr(ev["delta"])},
+		}))
+	} else if typ == "response.output_item.added" {
+		lines = append(lines, emitResponsesToolToClaude(AsMap(ev["item"]), state)...)
+	} else if typ == "response.function_call_arguments.delta" {
+		lines = append(lines, claudeToolDelta(state, AsStr(ev["delta"]))...)
 	} else if typ == "response.completed" || typ == "response.done" {
 		captureResponsesUsage(state, AsMap(ev["response"])["usage"])
-		lines = append(lines, sse("content_block_stop", map[string]any{"type": "content_block_stop", "index": 0}))
-		lines = append(lines, sse("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": "end_turn"}, "usage": map[string]any{"output_tokens": state.CompletionTokens}}))
+		lines = append(lines, claudeFinishBlocks(state)...)
+		lines = append(lines, sse("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": claudeStopReason(state, "")}, "usage": claudeUsageFromState(state)}))
 		lines = append(lines, sse("message_stop", map[string]any{"type": "message_stop"}))
 		state.Finished = true
 	}
@@ -389,11 +413,9 @@ func claudeContentToChat(content any) any {
 		if AsStr(p["type"]) == "text" {
 			parts = append(parts, map[string]any{"type": "text", "text": AsStr(p["text"])})
 		} else if AsStr(p["type"]) == "image" {
-			source := AsMap(p["source"])
-			parts = append(parts, map[string]any{
-				"type":      "image_url",
-				"image_url": map[string]any{"url": "data:" + AsStr(source["media_type"], "image/png") + ";base64," + AsStr(source["data"])},
-			})
+			if part := openaiImageFromClaude(AsMap(p["source"])); part != nil {
+				parts = append(parts, part)
+			}
 		}
 	}
 	if len(parts) == 1 && AsStr(AsMap(parts[0])["type"]) == "text" {

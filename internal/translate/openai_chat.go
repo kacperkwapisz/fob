@@ -59,8 +59,8 @@ func openaiChatToClaude(model string, stream bool, body any) RequestResult {
 				}
 				blocks = append(blocks, map[string]any{"type": "tool_use", "id": AsStr(c["id"]), "name": AsStr(fn["name"]), "input": input})
 			}
-			if s, ok := m["reasoning"].(string); ok {
-				blocks = append([]any{map[string]any{"type": "thinking", "thinking": s}}, blocks...)
+			if s := MessageReasoning(m); s != "" {
+				blocks = append([]any{thinkingBlock(s)}, blocks...)
 			}
 			var outContent any = blocks
 			if len(blocks) == 1 && AsStr(AsMap(blocks[0])["type"]) == "text" {
@@ -119,6 +119,9 @@ func openaiChatToClaude(model string, stream bool, body any) RequestResult {
 	} else if effort := AsStr(rec["reasoning_effort"]); effort != "" {
 		out["thinking"] = map[string]any{"type": "enabled", "budget_tokens": effortToBudget(effort)}
 	}
+	if rec["tool_choice"] != nil {
+		out["tool_choice"] = toolChoiceToClaude(rec["tool_choice"])
+	}
 	out = AsMap(injectClaudeCache(out, readPromptCacheKey(rec)))
 	return RequestResult{Model: model, Stream: stream, Body: out}
 }
@@ -149,6 +152,9 @@ func openaiChatToCodex(model string, stream bool, body any) RequestResult {
 			continue
 		}
 		if role == "assistant" {
+			if r := MessageReasoning(m); r != "" {
+				input = append(input, reasoningOutputItem(r))
+			}
 			content := openaiPartsToResponses(m["content"])
 			if len(content) > 0 {
 				input = append(input, map[string]any{"type": "message", "role": "assistant", "content": content})
@@ -205,6 +211,9 @@ func openaiChatToCodex(model string, stream bool, body any) RequestResult {
 	} else if effort := AsStr(rec["reasoning_effort"]); effort != "" {
 		out["reasoning"] = map[string]any{"effort": effort}
 	}
+	if rec["tool_choice"] != nil {
+		out["tool_choice"] = toolChoiceToResponses(rec["tool_choice"])
+	}
 	out = AsMap(liftPrefixForCodex(out, readPromptCacheKey(rec)))
 	return RequestResult{Model: model, Stream: stream, Body: out}
 }
@@ -223,7 +232,7 @@ func claudeToOpenaiChat(model string, _, upstream any) any {
 		msg["tool_calls"] = converted["tool_calls"]
 	}
 	if converted["reasoning"] != nil {
-		msg["reasoning_content"] = converted["reasoning"]
+		ApplyChatReasoning(msg, AsStr(converted["reasoning"]))
 	}
 	return map[string]any{
 		"id": id, "object": "chat.completion", "created": nowUnix(), "model": model,
@@ -237,6 +246,7 @@ func grokToOpenaiChat(model string, _, upstream any) any {
 	if AsStr(u["object"]) == "chat.completion" || u["choices"] != nil {
 		out := cloneMap(u)
 		out["model"] = model
+		normalizeChatReasoning(out)
 		return out
 	}
 	return claudeToOpenaiChat(model, nil, upstream)
@@ -279,7 +289,7 @@ func codexToOpenaiChat(model string, _, upstream any) any {
 		msg["tool_calls"] = toolCalls
 	}
 	if reasoning != "" {
-		msg["reasoning_content"] = reasoning
+		ApplyChatReasoning(msg, reasoning)
 	}
 	return map[string]any{
 		"id": id, "object": "chat.completion", "created": nowUnix(), "model": model,
@@ -323,7 +333,7 @@ func claudeStreamToOpenaiChat(model string, _ any, chunk any, state *StreamState
 				"tool_calls": []any{map[string]any{"index": state.ToolIndex, "function": map[string]any{"arguments": AsStr(delta["partial_json"])}}},
 			}, nil, nil)))
 		} else if dt == "thinking_delta" {
-			lines = append(lines, chunkLine(openaiChatChunk(state.ID, model, map[string]any{"reasoning_content": AsStr(delta["thinking"])}, nil, nil)))
+			lines = append(lines, chunkLine(openaiChatChunk(state.ID, model, ChatReasoningDelta(AsStr(delta["thinking"])), nil, nil)))
 		}
 	case "content_block_stop":
 		if AsStr(AsMap(ev["content_block"])["type"]) == "tool_use" {
@@ -356,6 +366,7 @@ func grokStreamToOpenaiChat(model string, _ any, chunk any, state *StreamState) 
 	if AsStr(c["id"]) == "" {
 		out["id"] = state.ID
 	}
+	normalizeChatReasoning(out)
 	lines := []string{chunkLine(out)}
 	choice := AsMap(first(AsArr(c["choices"])))
 	captureStreamError(state, choice)
@@ -401,6 +412,9 @@ func captureUsage(state *StreamState, raw any) {
 	if n, ok := AsNum(details["cache_write_tokens"]); ok {
 		state.CacheWrite = int64(n)
 	}
+	if n, ok := AsNum(AsMap(u["completion_tokens_details"])["reasoning_tokens"]); ok {
+		state.ReasoningTokens = int64(n)
+	}
 	if routed := AsStr(u["routed_model"]); routed != "" {
 		state.RoutedModel = routed
 	}
@@ -421,8 +435,8 @@ func codexStreamToOpenaiChat(model string, _ any, chunk any, state *StreamState)
 		}
 	case "response.output_text.delta":
 		lines = append(lines, chunkLine(openaiChatChunk(state.ID, model, map[string]any{"content": AsStr(ev["delta"])}, nil, nil)))
-	case "response.reasoning_summary_text.delta", "response.reasoning.delta":
-		lines = append(lines, chunkLine(openaiChatChunk(state.ID, model, map[string]any{"reasoning_content": AsStr(ev["delta"])}, nil, nil)))
+	case "response.reasoning_summary_text.delta", "response.reasoning_text.delta", "response.reasoning.delta":
+		lines = append(lines, chunkLine(openaiChatChunk(state.ID, model, ChatReasoningDelta(AsStr(ev["delta"])), nil, nil)))
 	case "response.output_item.added":
 		item := AsMap(ev["item"])
 		if AsStr(item["type"]) == "function_call" {
@@ -517,6 +531,7 @@ func responsesContentToOpenai(content any) any {
 }
 
 func openaiChatChunk(id, model string, delta map[string]any, finish any, state *StreamState) any {
+	ApplyChatReasoning(delta, DeltaReasoning(delta))
 	out := map[string]any{
 		"id": id, "object": "chat.completion.chunk", "created": nowUnix(), "model": model,
 		"choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": finish}},
@@ -571,10 +586,17 @@ func mapResponsesUsage(usage any) map[string]any {
 		completion, _ = AsNum(u["completion_tokens"])
 	}
 	details := AsMap(u["input_tokens_details"])
+	if len(details) == 0 {
+		details = AsMap(u["prompt_tokens_details"])
+	}
 	cacheRead, _ := AsNum(details["cached_tokens"])
+	reasoning, _ := AsNum(AsMap(firstNonNil(u["output_tokens_details"], u["completion_tokens_details"]))["reasoning_tokens"])
 	out := map[string]any{"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": prompt + completion}
 	if cacheRead != 0 {
 		out["prompt_tokens_details"] = map[string]any{"cached_tokens": cacheRead}
+	}
+	if reasoning != 0 {
+		out["completion_tokens_details"] = map[string]any{"reasoning_tokens": reasoning}
 	}
 	return out
 }
@@ -590,6 +612,79 @@ func captureResponsesUsage(state *StreamState, usage any) {
 	if n, ok := AsNum(details["cached_tokens"]); ok {
 		state.CacheRead = int64(n)
 	}
+	if n, ok := AsNum(AsMap(u["completion_tokens_details"])["reasoning_tokens"]); ok {
+		state.ReasoningTokens = int64(n)
+	}
+}
+
+func usageToResponses(raw any) map[string]any {
+	u := AsMap(raw)
+	prompt, ok := AsNum(u["prompt_tokens"])
+	if !ok {
+		prompt, _ = AsNum(u["input_tokens"])
+	}
+	completion, ok := AsNum(u["completion_tokens"])
+	if !ok {
+		completion, _ = AsNum(u["output_tokens"])
+	}
+	details := AsMap(u["prompt_tokens_details"])
+	if len(details) == 0 {
+		details = AsMap(u["input_tokens_details"])
+	}
+	cacheRead, _ := AsNum(details["cached_tokens"])
+	if cacheRead == 0 {
+		cacheRead, _ = AsNum(u["cache_read_input_tokens"])
+	}
+	reasoning, _ := AsNum(AsMap(firstNonNil(u["completion_tokens_details"], u["output_tokens_details"]))["reasoning_tokens"])
+	out := map[string]any{"input_tokens": prompt, "output_tokens": completion}
+	if cacheRead != 0 {
+		out["input_tokens_details"] = map[string]any{"cached_tokens": cacheRead}
+	}
+	if reasoning != 0 {
+		out["output_tokens_details"] = map[string]any{"reasoning_tokens": reasoning}
+	}
+	return out
+}
+
+func usageToClaude(raw any) map[string]any {
+	u := AsMap(raw)
+	prompt, ok := AsNum(u["prompt_tokens"])
+	if !ok {
+		prompt, _ = AsNum(u["input_tokens"])
+	}
+	completion, ok := AsNum(u["completion_tokens"])
+	if !ok {
+		completion, _ = AsNum(u["output_tokens"])
+	}
+	details := AsMap(u["prompt_tokens_details"])
+	cacheRead, _ := AsNum(details["cached_tokens"])
+	cacheWrite, _ := AsNum(details["cache_write_tokens"])
+	if cacheRead == 0 {
+		cacheRead, _ = AsNum(u["cache_read_input_tokens"])
+	}
+	if cacheWrite == 0 {
+		cacheWrite, _ = AsNum(u["cache_creation_input_tokens"])
+	}
+	out := map[string]any{"input_tokens": prompt, "output_tokens": completion}
+	if cacheRead != 0 {
+		out["cache_read_input_tokens"] = cacheRead
+	}
+	if cacheWrite != 0 {
+		out["cache_creation_input_tokens"] = cacheWrite
+	}
+	return out
+}
+
+func usageFromState(state *StreamState) map[string]any {
+	if state == nil {
+		return map[string]any{"input_tokens": 0, "output_tokens": 0}
+	}
+	return usageToResponses(map[string]any{
+		"prompt_tokens":             state.PromptTokens,
+		"completion_tokens":         state.CompletionTokens,
+		"prompt_tokens_details":     map[string]any{"cached_tokens": state.CacheRead, "cache_write_tokens": state.CacheWrite},
+		"completion_tokens_details": map[string]any{"reasoning_tokens": state.ReasoningTokens},
+	})
 }
 
 func effortToBudget(effort string) int {

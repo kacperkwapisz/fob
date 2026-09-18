@@ -406,6 +406,63 @@ func TestProcessServerCapturesRoutedModel(t *testing.T) {
 	}
 }
 
+func TestCollectNonStreamMergesToolDeltas(t *testing.T) {
+	result := collectNonStream("chatcmpl-x", 1, "composer-2.5", []map[string]any{
+		{
+			"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"tool_calls": []any{map[string]any{
+				"index": 0, "id": "c1", "type": "function", "function": map[string]any{"name": "lookup", "arguments": `{"q":`},
+			}}}, "finish_reason": nil}},
+		},
+		{
+			"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"tool_calls": []any{map[string]any{
+				"index": 0, "function": map[string]any{"arguments": `"x"}`},
+			}}}, "finish_reason": nil}},
+		},
+		{
+			"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "tool_calls"}},
+		},
+	}, &streamProtoState{})
+	msg := translate.AsMap(translate.AsMap(translate.AsArr(translate.AsMap(result.Body)["choices"])[0])["message"])
+	calls := translate.AsArr(msg["tool_calls"])
+	if len(calls) != 1 {
+		t.Fatalf("%+v", msg)
+	}
+	fn := translate.AsMap(translate.AsMap(calls[0])["function"])
+	if translate.AsStr(fn["name"]) != "lookup" || translate.AsStr(fn["arguments"]) != `{"q":"x"}` {
+		t.Fatalf("%+v", calls[0])
+	}
+}
+
+func TestCollectNonStreamKeepsReasoning(t *testing.T) {
+	result := collectNonStream("chatcmpl-x", 1, "composer-2.5", []map[string]any{
+		{
+			"id": "chatcmpl-x", "object": "chat.completion.chunk", "created": int64(1), "model": "composer-2.5",
+			"choices": []any{map[string]any{"index": 0, "delta": translate.ChatReasoningDelta("hmm"), "finish_reason": nil}},
+		},
+		{
+			"id": "chatcmpl-x", "object": "chat.completion.chunk", "created": int64(1), "model": "composer-2.5",
+			"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"content": "OK"}, "finish_reason": nil}},
+		},
+		{
+			"id": "chatcmpl-x", "object": "chat.completion.chunk", "created": int64(1), "model": "composer-2.5",
+			"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}},
+		},
+	}, &streamProtoState{})
+	if result.Status != 200 {
+		t.Fatalf("%+v", result)
+	}
+	msg := translate.AsMap(translate.AsMap(translate.AsArr(translate.AsMap(result.Body)["choices"])[0])["message"])
+	if translate.AsStr(msg["content"]) != "OK" {
+		t.Fatalf("content %+v", msg)
+	}
+	if translate.MessageReasoning(msg) != "hmm" {
+		t.Fatalf("reasoning %+v", msg)
+	}
+	if translate.AsStr(msg["reasoning_content"]) == "" || translate.AsStr(msg["reasoning"]) == "" {
+		t.Fatalf("dual fields %+v", msg)
+	}
+}
+
 func TestCollectNonStreamSkipsEmptyChoices(t *testing.T) {
 	result := collectNonStream("chatcmpl-x", 1, "composer-2.5", []map[string]any{
 		{
@@ -491,6 +548,91 @@ func TestRunCursorChatNonStream(t *testing.T) {
 	msg := translate.AsMap(choice["message"])
 	if translate.AsStr(msg["content"]) != "OK" {
 		t.Fatalf("%+v", result.Body)
+	}
+}
+
+func TestRunCursorChatStreamsThinking(t *testing.T) {
+	t.Setenv("CURSOR_AGENT_URL", "https://agentn.test.cursor.sh")
+	SetBridgeFactoryForTests(func(_, _, _ string, _ bool, _ ClientKind) *Bridge {
+		var onData func([]byte)
+		var onClose func(int)
+		alive := true
+		return &Bridge{
+			Write: func(frame []byte) {
+				if len(frame) < 5 {
+					return
+				}
+				var msg agentpb.AgentClientMessage
+				if err := proto.Unmarshal(frame[5:], &msg); err == nil && msg.GetRunRequest() != nil && onData != nil {
+					go func() {
+						onData(frameConnect(mustMarshal(&agentpb.AgentServerMessage{
+							Message: &agentpb.AgentServerMessage_InteractionUpdate{
+								InteractionUpdate: &agentpb.InteractionUpdate{
+									Message: &agentpb.InteractionUpdate_ThinkingDelta{ThinkingDelta: &agentpb.ThinkingDeltaUpdate{Text: "hmm"}},
+								},
+							},
+						}), 0))
+						onData(frameConnect(mustMarshal(&agentpb.AgentServerMessage{
+							Message: &agentpb.AgentServerMessage_InteractionUpdate{
+								InteractionUpdate: &agentpb.InteractionUpdate{
+									Message: &agentpb.InteractionUpdate_TextDelta{TextDelta: &agentpb.TextDeltaUpdate{Text: "OK"}},
+								},
+							},
+						}), 0))
+						onData(frameConnect(mustMarshal(&agentpb.AgentServerMessage{
+							Message: &agentpb.AgentServerMessage_InteractionUpdate{
+								InteractionUpdate: &agentpb.InteractionUpdate{
+									Message: &agentpb.InteractionUpdate_TurnEnded{TurnEnded: &agentpb.TurnEndedUpdate{}},
+								},
+							},
+						}), 0))
+						onData(frameConnect(mustMarshal(&agentpb.AgentServerMessage{
+							Message: &agentpb.AgentServerMessage_ConversationCheckpointUpdate{
+								ConversationCheckpointUpdate: &agentpb.ConversationStateStructure{},
+							},
+						}), 0))
+						if onClose != nil {
+							onClose(0)
+						}
+					}()
+				}
+			},
+			End:     func() { alive = false },
+			OnData:  func(cb func([]byte)) { onData = cb },
+			OnClose: func(cb func(int)) { onClose = cb },
+			Alive:   func() bool { return alive },
+		}
+	})
+	defer SetBridgeFactoryForTests(nil)
+	defer CleanupAllSessionState()
+
+	stream, err := RunChat(context.Background(), "tok", map[string]any{
+		"model": "composer-2.5", "messages": []any{map[string]any{"role": "user", "content": "hi"}}, "stream": true,
+	}, true, ClientCLI)
+	if err != nil || stream.Stream == nil {
+		t.Fatalf("%+v %v", stream, err)
+	}
+	joined := ""
+	for ev := range stream.Stream {
+		joined += marshalJSON(ev)
+	}
+	if !containsStr(joined, `"reasoning_content":"hmm"`) || !containsStr(joined, `"reasoning":"hmm"`) {
+		t.Fatalf("stream %s", joined)
+	}
+	if !containsStr(joined, `"content":"OK"`) {
+		t.Fatalf("content %s", joined)
+	}
+
+	CleanupAllSessionState()
+	nostream, err := RunChat(context.Background(), "tok", map[string]any{
+		"model": "composer-2.5", "messages": []any{map[string]any{"role": "user", "content": "hi"}}, "stream": false,
+	}, false, ClientCLI)
+	if err != nil || nostream.Status != 200 {
+		t.Fatalf("%+v %v", nostream, err)
+	}
+	msg := translate.AsMap(translate.AsMap(translate.AsArr(translate.AsMap(nostream.Body)["choices"])[0])["message"])
+	if translate.MessageReasoning(msg) != "hmm" || translate.AsStr(msg["content"]) != "OK" {
+		t.Fatalf("nostream %+v", nostream.Body)
 	}
 }
 
@@ -698,6 +840,72 @@ func TestResumeToolsLateProtocolErrorDoesNotPanic(t *testing.T) {
 			InteractionQuery: &agentpb.InteractionQuery{Id: 1},
 		},
 	}), 0))
+}
+
+func TestHandleInteractionQueryDoesNotProtocolError(t *testing.T) {
+	cases := []struct {
+		name string
+		q    *agentpb.InteractionQuery
+		want func(*agentpb.InteractionResponse) bool
+	}{
+		{
+			name: "webSearch",
+			q: &agentpb.InteractionQuery{Id: 7, Query: &agentpb.InteractionQuery_WebSearchRequestQuery{
+				WebSearchRequestQuery: &agentpb.WebSearchRequestQuery{Args: &agentpb.WebSearchArgs{SearchTerm: "go generics"}},
+			}},
+			want: func(r *agentpb.InteractionResponse) bool {
+				return r.GetId() == 7 && r.GetWebSearchRequestResponse().GetApproved() != nil
+			},
+		},
+		{
+			name: "exaSearch",
+			q: &agentpb.InteractionQuery{Id: 8, Query: &agentpb.InteractionQuery_ExaSearchRequestQuery{
+				ExaSearchRequestQuery: &agentpb.ExaSearchRequestQuery{},
+			}},
+			want: func(r *agentpb.InteractionResponse) bool {
+				return r.GetId() == 8 && r.GetExaSearchRequestResponse().GetApproved() != nil
+			},
+		},
+		{
+			name: "askQuestion",
+			q: &agentpb.InteractionQuery{Id: 9, Query: &agentpb.InteractionQuery_AskQuestionInteractionQuery{
+				AskQuestionInteractionQuery: &agentpb.AskQuestionInteractionQuery{},
+			}},
+			want: func(r *agentpb.InteractionResponse) bool {
+				return r.GetId() == 9 && r.GetAskQuestionInteractionResponse().GetResult().GetRejected() != nil
+			},
+		},
+		{
+			name: "unknown",
+			q:    &agentpb.InteractionQuery{Id: 1},
+			want: func(r *agentpb.InteractionResponse) bool { return r.GetId() == 1 },
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var wrote [][]byte
+			var errs []string
+			bridge := &Bridge{Write: func(b []byte) { wrote = append(wrote, append([]byte(nil), b...)) }, End: func() {}, Alive: func() bool { return true }}
+			processServer(context.Background(), &agentpb.AgentServerMessage{
+				Message: &agentpb.AgentServerMessage_InteractionQuery{InteractionQuery: tc.q},
+			}, map[string][]byte{}, nil, bridge, &streamProtoState{}, nil, nil, nil, func(msg string) {
+				errs = append(errs, msg)
+			})
+			if len(errs) != 0 {
+				t.Fatalf("protocol error %v", errs)
+			}
+			if len(wrote) != 1 {
+				t.Fatalf("wrote %d", len(wrote))
+			}
+			var msg agentpb.AgentClientMessage
+			if err := proto.Unmarshal(wrote[0][5:], &msg); err != nil {
+				t.Fatal(err)
+			}
+			if !tc.want(msg.GetInteractionResponse()) {
+				t.Fatalf("%+v", msg.GetInteractionResponse())
+			}
+		})
+	}
 }
 
 func TestHandleExecRejectsNewCursorTools(t *testing.T) {

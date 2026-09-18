@@ -18,11 +18,18 @@ type StreamState struct {
 	Started          bool
 	Finished         bool
 	Error            string
+	HasTools         bool
 	ToolIndex        int
+	BlockIndex       int
+	BlockKind        string
+	Text             string
+	Reasoning        string
+	Tools            []any
 	PromptTokens     int64
 	CompletionTokens int64
 	CacheRead        int64
 	CacheWrite       int64
+	ReasoningTokens  int64
 	RoutedModel      string
 }
 

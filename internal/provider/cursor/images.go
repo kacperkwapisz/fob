@@ -41,6 +41,16 @@ func ExtractImages(content any) ([]ImagePart, error) {
 		}
 		if typ == "image" {
 			source := translate.AsMap(p["source"])
+			if translate.AsStr(source["type"]) == "url" || translate.AsStr(source["url"]) != "" {
+				image, err := loadImage(translate.AsStr(source["url"]))
+				if err != nil {
+					return nil, err
+				}
+				if image != nil {
+					out = append(out, *image)
+				}
+				continue
+			}
 			media := translate.AsStr(source["media_type"], "image/png")
 			data := translate.AsStr(source["data"])
 			if data == "" {

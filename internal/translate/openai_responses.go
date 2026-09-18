@@ -24,7 +24,11 @@ func responsesToGrok(model string, stream bool, body any) RequestResult {
 		it := AsMap(item)
 		typ := AsStr(it["type"], "message")
 		if typ == "message" {
-			messages = append(messages, map[string]any{"role": AsStr(it["role"], "user"), "content": flattenText(it["content"])})
+			messages = append(messages, map[string]any{"role": AsStr(it["role"], "user"), "content": responsesContentToOpenai(it["content"])})
+		} else if typ == "reasoning" {
+			msg := map[string]any{"role": "assistant", "content": nil}
+			ApplyChatReasoning(msg, flattenText(firstNonNil(it["summary"], it["content"])))
+			messages = append(messages, msg)
 		} else if typ == "function_call" {
 			id := AsStr(it["call_id"])
 			if id == "" {
@@ -66,6 +70,17 @@ func responsesToGrok(model string, stream bool, body any) RequestResult {
 	if rec["temperature"] != nil {
 		out["temperature"] = rec["temperature"]
 	}
+	if n, ok := AsNum(rec["max_output_tokens"]); ok {
+		out["max_tokens"] = n
+	}
+	if r := AsMap(rec["reasoning"]); AsStr(r["effort"]) != "" {
+		out["reasoning_effort"] = AsStr(r["effort"])
+	} else if effort := AsStr(rec["reasoning_effort"]); effort != "" {
+		out["reasoning_effort"] = effort
+	}
+	if rec["tool_choice"] != nil {
+		out["tool_choice"] = toolChoiceToChat(rec["tool_choice"])
+	}
 	out = AsMap(liftPrefixForCodex(out, readPromptCacheKey(rec)))
 	return RequestResult{Model: model, Stream: stream, Body: out}
 }
@@ -91,7 +106,9 @@ func responsesToClaude(model string, stream bool, body any) RequestResult {
 			if role == "assistant" {
 				r = "assistant"
 			}
-			messages = append(messages, map[string]any{"role": r, "content": flattenText(it["content"])})
+			messages = append(messages, map[string]any{"role": r, "content": openaiContentToClaude(responsesContentToOpenai(it["content"]))})
+		} else if typ == "reasoning" {
+			messages = append(messages, map[string]any{"role": "assistant", "content": []any{thinkingBlock(flattenText(firstNonNil(it["summary"], it["content"])))}})
 		} else if typ == "function_call" {
 			var input any = map[string]any{}
 			_ = json.Unmarshal([]byte(AsStr(it["arguments"], "{}")), &input)
@@ -139,6 +156,9 @@ func responsesToClaude(model string, stream bool, body any) RequestResult {
 		r := AsMap(rec["reasoning"])
 		out["thinking"] = map[string]any{"type": "enabled", "budget_tokens": effortToBudget(AsStr(r["effort"]))}
 	}
+	if rec["tool_choice"] != nil {
+		out["tool_choice"] = toolChoiceToClaude(rec["tool_choice"])
+	}
 	out = AsMap(injectClaudeCache(out, readPromptCacheKey(rec)))
 	return RequestResult{Model: model, Stream: stream, Body: out}
 }
@@ -157,6 +177,9 @@ func grokToResponses(model string, _, upstream any) any {
 	choice := AsMap(first(AsArr(u["choices"])))
 	message := AsMap(choice["message"])
 	var output []any
+	if r := MessageReasoning(message); r != "" {
+		output = append(output, reasoningOutputItem(r))
+	}
 	if message["content"] != nil {
 		text := ""
 		if s, ok := message["content"].(string); ok {
@@ -171,16 +194,13 @@ func grokToResponses(model string, _, upstream any) any {
 		fn := AsMap(c["function"])
 		output = append(output, map[string]any{"type": "function_call", "call_id": AsStr(c["id"]), "name": AsStr(fn["name"]), "arguments": AsStr(fn["arguments"], "{}")})
 	}
-	usage := AsMap(u["usage"])
 	id := AsStr(u["id"])
 	if id == "" {
 		id = "resp_" + itoa(nowUnix())
 	}
-	prompt, _ := AsNum(usage["prompt_tokens"])
-	completion, _ := AsNum(usage["completion_tokens"])
 	return map[string]any{
 		"id": id, "object": "response", "status": "completed", "model": model, "output": output,
-		"usage": map[string]any{"input_tokens": prompt, "output_tokens": completion},
+		"usage": usageToResponses(u["usage"]),
 	}
 }
 
@@ -210,16 +230,13 @@ func claudeToResponses(model string, _, upstream any) any {
 	if len(textParts) > 0 {
 		output = append(output, map[string]any{"type": "message", "role": "assistant", "content": textParts})
 	}
-	usage := AsMap(u["usage"])
 	id := AsStr(u["id"])
 	if id == "" {
 		id = "resp_" + itoa(nowUnix())
 	}
-	in, _ := AsNum(usage["input_tokens"])
-	outn, _ := AsNum(usage["output_tokens"])
 	return map[string]any{
 		"id": id, "object": "response", "status": "completed", "model": model, "output": output,
-		"usage": map[string]any{"input_tokens": in, "output_tokens": outn},
+		"usage": usageToResponses(u["usage"]),
 	}
 }
 
@@ -235,6 +252,7 @@ func codexStreamToResponses(_ string, _ any, chunk any, state *StreamState) []st
 
 func grokStreamToResponses(model string, _ any, chunk any, state *StreamState) []string {
 	c := AsMap(chunk)
+	captureUsage(state, c["usage"])
 	choice := AsMap(first(AsArr(c["choices"])))
 	delta := AsMap(choice["delta"])
 	var lines []string
@@ -245,16 +263,22 @@ func grokStreamToResponses(model string, _ any, chunk any, state *StreamState) [
 		}
 		lines = append(lines, sse("response.created", map[string]any{"type": "response.created", "response": map[string]any{"id": state.ID, "object": "response", "model": model, "status": "in_progress"}}))
 	}
+	if r := DeltaReasoning(delta); r != "" {
+		state.Reasoning += r
+		lines = append(lines, responsesReasoningDeltas(r)...)
+	}
 	if s, ok := delta["content"].(string); ok && s != "" {
+		state.Text += s
 		lines = append(lines, sse("response.output_text.delta", map[string]any{"type": "response.output_text.delta", "delta": s}))
 	}
+	lines = append(lines, emitChatToolsToResponses(delta, state)...)
 	if choice["finish_reason"] != nil {
 		captureStreamError(state, choice)
 		status := "completed"
 		if AsStr(choice["finish_reason"]) == "error" {
 			status = "failed"
 		}
-		lines = append(lines, sse("response.completed", map[string]any{"type": "response.completed", "response": map[string]any{"id": state.ID, "object": "response", "model": model, "status": status, "output": []any{}}}))
+		lines = append(lines, responsesCompletedEvent(model, status, state))
 		if AsStr(choice["finish_reason"]) != "error" {
 			state.Finished = true
 		}
@@ -266,19 +290,53 @@ func claudeStreamToResponses(model string, _ any, chunk any, state *StreamState)
 	ev := AsMap(chunk)
 	typ := AsStr(ev["type"])
 	var lines []string
-	if typ == "message_start" {
+	switch typ {
+	case "message_start":
 		state.Started = true
-		if id := AsStr(AsMap(ev["message"])["id"]); id != "" {
+		msg := AsMap(ev["message"])
+		if id := AsStr(msg["id"]); id != "" {
 			state.ID = id
 		}
+		u := mapClaudeUsage(msg["usage"])
+		state.PromptTokens = int64(numOf(u["prompt_tokens"]))
+		state.CompletionTokens = int64(numOf(u["completion_tokens"]))
 		lines = append(lines, sse("response.created", map[string]any{"type": "response.created", "response": map[string]any{"id": state.ID, "object": "response", "model": model, "status": "in_progress"}}))
-	} else if typ == "content_block_delta" {
-		delta := AsMap(ev["delta"])
-		if AsStr(delta["type"]) == "text_delta" {
-			lines = append(lines, sse("response.output_text.delta", map[string]any{"type": "response.output_text.delta", "delta": AsStr(delta["text"])}))
+	case "content_block_start":
+		block := AsMap(ev["content_block"])
+		if AsStr(block["type"]) == "tool_use" {
+			id := AsStr(block["id"])
+			item := map[string]any{"type": "function_call", "call_id": id, "name": AsStr(block["name"]), "arguments": ""}
+			state.Tools = append(state.Tools, item)
+			state.HasTools = true
+			lines = append(lines, sse("response.output_item.added", map[string]any{"type": "response.output_item.added", "item": item}))
 		}
-	} else if typ == "message_stop" {
-		lines = append(lines, sse("response.completed", map[string]any{"type": "response.completed", "response": map[string]any{"id": state.ID, "object": "response", "model": model, "status": "completed"}}))
+	case "content_block_delta":
+		delta := AsMap(ev["delta"])
+		switch AsStr(delta["type"]) {
+		case "text_delta":
+			text := AsStr(delta["text"])
+			state.Text += text
+			lines = append(lines, sse("response.output_text.delta", map[string]any{"type": "response.output_text.delta", "delta": text}))
+		case "thinking_delta":
+			text := AsStr(delta["thinking"])
+			state.Reasoning += text
+			lines = append(lines, responsesReasoningDeltas(text)...)
+		case "input_json_delta":
+			args := AsStr(delta["partial_json"])
+			if args != "" && len(state.Tools) > 0 {
+				last := AsMap(state.Tools[len(state.Tools)-1])
+				last["arguments"] = AsStr(last["arguments"]) + args
+			}
+			if args != "" {
+				lines = append(lines, sse("response.function_call_arguments.delta", map[string]any{"type": "response.function_call_arguments.delta", "delta": args}))
+			}
+		}
+	case "message_delta":
+		if n, ok := AsNum(AsMap(ev["usage"])["output_tokens"]); ok {
+			state.CompletionTokens = int64(n)
+		}
+	case "message_stop":
+		lines = append(lines, responsesCompletedEvent(model, "completed", state))
 		state.Finished = true
 	}
 	return lines

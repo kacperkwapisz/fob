@@ -513,12 +513,12 @@ func runStream(ctx context.Context, accessToken string, payload requestPayload, 
 			processServer(ctx, &server, payload.blobStore, payload.mcpTools, bridge, state,
 				func(text string, thinking bool) {
 					if thinking {
-						emit(map[string]any{"reasoning_content": text}, nil)
+						emit(translate.ChatReasoningDelta(text), nil)
 						return
 					}
 					content, reasoning := tags.Process(text)
 					if reasoning != "" {
-						emit(map[string]any{"reasoning_content": reasoning}, nil)
+						emit(translate.ChatReasoningDelta(reasoning), nil)
 					}
 					if content != "" {
 						emitAssistant(content)
@@ -529,7 +529,7 @@ func runStream(ctx context.Context, accessToken string, payload requestPayload, 
 					mcpSeen = true
 					c, r := tags.Flush()
 					if r != "" {
-						emit(map[string]any{"reasoning_content": r}, nil)
+						emit(translate.ChatReasoningDelta(r), nil)
 					}
 					if c != "" {
 						emitAssistant(c)
@@ -641,7 +641,7 @@ func runStream(ctx context.Context, accessToken string, payload requestPayload, 
 		}
 		c, r := tags.Flush()
 		if r != "" {
-			emit(map[string]any{"reasoning_content": r}, nil)
+			emit(translate.ChatReasoningDelta(r), nil)
 		}
 		if c != "" {
 			emitAssistant(c)
@@ -762,12 +762,12 @@ func resumeTools(ctx context.Context, active *activeBridge, parsed ParsedMessage
 			processServer(ctx, &server, active.blobStore, active.mcpTools, active.bridge, state,
 				func(text string, thinking bool) {
 					if thinking {
-						emit(map[string]any{"reasoning_content": text}, nil)
+						emit(translate.ChatReasoningDelta(text), nil)
 						return
 					}
 					c, r := tags.Process(text)
 					if r != "" {
-						emit(map[string]any{"reasoning_content": r}, nil)
+						emit(translate.ChatReasoningDelta(r), nil)
 					}
 					if c != "" {
 						joined := joiner.Push(c)
@@ -818,6 +818,17 @@ func resumeTools(ctx context.Context, active *activeBridge, parsed ParsedMessage
 		})
 	})
 	active.bridge.OnClose(func(code int) {
+		c, r := tags.Flush()
+		if r != "" {
+			emit(translate.ChatReasoningDelta(r), nil)
+		}
+		if c != "" {
+			joined := joiner.Push(c)
+			if joined != "" {
+				appendAssistantText(active.current, joined)
+				emit(map[string]any{"content": joined}, nil)
+			}
+		}
 		if state.turnEnded || code == closeEOF {
 			emit(map[string]any{}, "stop")
 		} else {
@@ -884,6 +895,7 @@ func pendingToolResult(modelID string, pending []pendingExec, stream bool) ChatR
 
 func collectNonStream(id string, created int64, model string, chunks []map[string]any, state *streamProtoState) ChatResult {
 	var text strings.Builder
+	var reasoning strings.Builder
 	var toolCalls []any
 	finish := "stop"
 	for _, c := range chunks {
@@ -896,8 +908,11 @@ func collectNonStream(id string, created int64, model string, chunks []map[strin
 		if s := translate.AsStr(delta["content"]); s != "" {
 			text.WriteString(s)
 		}
+		if s := translate.DeltaReasoning(delta); s != "" {
+			reasoning.WriteString(s)
+		}
 		if tc := translate.AsArr(delta["tool_calls"]); len(tc) > 0 {
-			toolCalls = append(toolCalls, tc...)
+			toolCalls = translate.MergeToolCallDeltas(toolCalls, tc)
 			finish = "tool_calls"
 		}
 		if fr := translate.AsStr(choice["finish_reason"]); fr != "" {
@@ -905,6 +920,7 @@ func collectNonStream(id string, created int64, model string, chunks []map[strin
 		}
 	}
 	msg := map[string]any{"role": "assistant", "content": text.String()}
+	translate.ApplyChatReasoning(msg, reasoning.String())
 	if len(toolCalls) > 0 {
 		msg["tool_calls"] = toolCalls
 		msg["content"] = nil
