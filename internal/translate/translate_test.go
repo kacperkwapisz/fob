@@ -248,6 +248,16 @@ func TestCursorTranslateMatrix(t *testing.T) {
 		t.Fatalf("%+v", out.Body)
 	}
 
+	out = TranslateRequest(domain.InboundClaudeMessages, domain.FormatCursor, "claude-opus-5", false, map[string]any{
+		"model":    "claude-opus-5",
+		"thinking": map[string]any{"type": "enabled", "budget_tokens": 16000.0},
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	})
+	claudeBody := AsMap(out.Body)
+	if !ThinkingEnabled(claudeBody) || AsStr(claudeBody["reasoning_effort"]) != "high" {
+		t.Fatalf("claude thinking %+v", claudeBody)
+	}
+
 	upstream := map[string]any{
 		"id": "chatcmpl_1", "object": "chat.completion",
 		"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": "hello"}, "finish_reason": "stop"}},

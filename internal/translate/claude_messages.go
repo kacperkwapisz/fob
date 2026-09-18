@@ -110,6 +110,12 @@ func claudeToGrok(model string, stream bool, body any) RequestResult {
 	if n, ok := AsNum(rec["max_tokens"]); ok {
 		out["max_tokens"] = n
 	}
+	if ThinkingEnabled(rec) {
+		out["thinking"] = rec["thinking"]
+		out["reasoning_effort"] = EffortFromThinking(rec)
+	} else if effort := AsStr(rec["reasoning_effort"]); effort != "" {
+		out["reasoning_effort"] = effort
+	}
 	out = AsMap(liftPrefixForCodex(out, readPromptCacheKey(rec)))
 	return RequestResult{Model: model, Stream: stream, Body: out}
 }

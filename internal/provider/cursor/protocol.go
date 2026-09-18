@@ -101,7 +101,12 @@ func messagesFromBody(body map[string]any) []OpenAIMessage {
 	return out
 }
 
-func resolveModelID(model, effort string, fast ...bool) string {
+type modelQuery struct {
+	base, family, effort   string
+	wantFast, wantThinking bool
+}
+
+func parseModelQuery(model, effort string, fast ...bool) modelQuery {
 	base := WireID(StripPublicPrefix(model))
 	hasFast := strings.HasSuffix(base, "-fast")
 	if hasFast {
@@ -118,7 +123,16 @@ func resolveModelID(model, effort string, fast ...bool) string {
 	if effort == "" {
 		effort = effortFromID(base)
 	}
-	wantThinking := strings.Contains(base, "-thinking")
+	return modelQuery{
+		base: base, family: family, effort: effort,
+		wantFast:     wantFast,
+		wantThinking: strings.Contains(base, "-thinking") || strings.HasSuffix(family, "-thinking"),
+	}
+}
+
+func resolveModelID(model, effort string, fast ...bool) string {
+	q := parseModelQuery(model, effort, fast...)
+	base, family, effort, wantFast, wantThinking := q.base, q.family, q.effort, q.wantFast, q.wantThinking
 	variants := lookupVariants(family)
 	if variants != nil {
 		for _, key := range searchEffortKeys(effort) {
@@ -217,6 +231,61 @@ func firstKnown(known []string, ids ...string) string {
 	return ""
 }
 
+func resolveArgs(body map[string]any) (model, effort string, fast []bool) {
+	model = translate.AsStr(body["model"])
+	effort = translate.AsStr(body["reasoning_effort"])
+	if effort == "" {
+		effort = translate.EffortFromThinking(body)
+	}
+	if thinkingRequested(model, body) {
+		model = ensureThinkingID(model)
+	}
+	if flag, ok := body["fast"].(bool); ok {
+		return model, effort, []bool{flag}
+	}
+	return model, effort, nil
+}
+
+func thinkingRequested(model string, body map[string]any) bool {
+	if strings.Contains(StripPublicPrefix(model), "-thinking") {
+		return true
+	}
+	if !translate.ThinkingEnabled(body) {
+		return false
+	}
+	family := publicFamilyID(WireID(StripPublicPrefix(model)))
+	return hasThinkingTwin(family)
+}
+
+func ensureThinkingID(model string) string {
+	prefix := ""
+	if strings.HasPrefix(model, "cursor/") {
+		prefix = "cursor/"
+		model = strings.TrimPrefix(model, "cursor/")
+	}
+	base := WireID(StripPublicPrefix(model))
+	fast := strings.HasSuffix(base, "-fast")
+	if fast {
+		base = strings.TrimSuffix(base, "-fast")
+	}
+	family := publicFamilyID(base)
+	if family == "" {
+		family = base
+	}
+	if !strings.HasSuffix(family, "-thinking") {
+		family += "-thinking"
+	}
+	if fast {
+		family += "-fast"
+	}
+	return prefix + family
+}
+
+func hasThinkingTwin(family string) bool {
+	core := strings.TrimSuffix(strings.TrimSuffix(family, "-fast"), "-thinking")
+	return lookupVariants(core+"-thinking") != nil
+}
+
 func selectionFromBody(body map[string]any) *requestedModelSelection {
 	raw := translate.AsMap(body["cursor_requested_model"])
 	id := translate.AsStr(raw["modelId"])
@@ -231,78 +300,52 @@ func selectionFromBody(body map[string]any) *requestedModelSelection {
 		}
 		return sel
 	}
-	fastFlag, hasFastFlag := body["fast"].(bool)
-	if hasFastFlag {
-		return resolveRequestedModel(translate.AsStr(body["model"]), translate.AsStr(body["reasoning_effort"]), fastFlag)
+	model, effort, fast := resolveArgs(body)
+	if len(fast) > 0 {
+		return resolveRequestedModel(model, effort, fast[0])
 	}
-	return resolveRequestedModel(translate.AsStr(body["model"]), translate.AsStr(body["reasoning_effort"]))
+	return resolveRequestedModel(model, effort)
 }
 
 func resolveRequestedModel(model, effort string, fast ...bool) *requestedModelSelection {
-	base := WireID(StripPublicPrefix(model))
-	hasFast := strings.HasSuffix(base, "-fast")
-	if hasFast {
-		base = strings.TrimSuffix(base, "-fast")
-	}
-	wantFast := hasFast
-	if len(fast) > 0 {
-		wantFast = fast[0]
-	}
-	family := publicFamilyID(base)
-	if family == "" {
-		family = base
-	}
-	if effort == "" {
-		effort = effortFromID(base)
-	}
-	variants := lookupVariants(family)
+	q := parseModelQuery(model, effort, fast...)
+	variants := lookupVariants(q.family)
 	if variants == nil {
 		return nil
 	}
 	var pair variantPair
-	matched := effort
-	for _, key := range searchEffortKeys(effort) {
-		pair = variants[key]
-		if wantFast && pair.fast == "" {
-			continue
-		}
-		if pair.standard != "" || pair.fast != "" {
-			matched = key
-			break
-		}
-	}
-	if pair.standard == "" && pair.fast == "" {
-		for _, key := range searchEffortKeys(effort) {
+	var wire string
+	matched := q.effort
+	pick := func(keys []string) bool {
+		for _, key := range keys {
 			pair = variants[key]
-			if pair.standard != "" || pair.fast != "" {
+			if q.wantFast && pair.fast == "" {
+				continue
+			}
+			if id := pickVariantMatching(pair, q.wantFast, q.wantThinking); id != "" {
 				matched = key
-				break
+				wire = id
+				return true
 			}
 		}
+		return false
 	}
-	if pair.standard == "" && pair.fast == "" {
-		return nil
-	}
-	wire := pair.standard
-	if wantFast && pair.fast != "" {
-		wire = pair.fast
-	} else if wire == "" {
-		wire = pair.fast
+	if !pick(searchEffortKeys(q.effort)) {
+		pick(searchEffortKeys(""))
 	}
 	if wire == "" {
 		return nil
 	}
 	var params []struct{ ID, Value string }
-	paramBase := publicFamilyID(wire)
+	paramBase := strings.TrimSuffix(q.family, "-thinking")
 	if paramBase == "" {
-		paramBase = family
+		paramBase = q.family
 	}
 	if isGrokID(paramBase) {
 		paramBase = grokBare(paramBase)
 	}
-	if strings.HasSuffix(paramBase, "-thinking") {
-		paramBase = strings.TrimSuffix(paramBase, "-thinking")
-		params = append(params, struct{ ID, Value string }{"thinking", "true"})
+	if q.wantThinking || hasThinkingTwin(q.family) {
+		params = append(params, struct{ ID, Value string }{"thinking", boolString(q.wantThinking)})
 	}
 	if matched != "" {
 		params = append(params, struct{ ID, Value string }{"effort", matched})
@@ -338,13 +381,11 @@ func evictStale(now time.Time) {
 func RunChat(ctx context.Context, accessToken string, body map[string]any, stream bool, client ClientKind) (ChatResult, error) {
 	messages := messagesFromBody(body)
 	parsed := ParseMessages(messages)
-	fastFlag, hasFastFlag := body["fast"].(bool)
 	requested := translate.AsStr(body["model"])
-	modelID := resolveModelID(requested, translate.AsStr(body["reasoning_effort"]))
-	if hasFastFlag {
-		modelID = resolveModelID(requested, translate.AsStr(body["reasoning_effort"]), fastFlag)
-	}
-	httpx.TraceFrom(ctx).Add("cursor requested=%s wire=%s effort=%s fast=%v tools=%d", requested, modelID, translate.AsStr(body["reasoning_effort"]), hasFastFlag && fastFlag, len(translate.AsArr(body["tools"])))
+	resolveID, effort, fastArgs := resolveArgs(body)
+	modelID := resolveModelID(resolveID, effort, fastArgs...)
+	fastFlag := len(fastArgs) > 0 && fastArgs[0]
+	httpx.TraceFrom(ctx).Add("cursor requested=%s wire=%s effort=%s fast=%v tools=%d", requested, modelID, effort, fastFlag, len(translate.AsArr(body["tools"])))
 	if parsed.UserText == "" && len(parsed.ToolResults) == 0 {
 		return ChatResult{Status: 400, Body: map[string]any{"error": map[string]any{"message": "No user message found", "type": "invalid_request_error"}}, Message: "No user message found"}, nil
 	}

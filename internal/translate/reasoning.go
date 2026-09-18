@@ -1,10 +1,29 @@
 package translate
 
+import "strings"
+
 const (
 	blockThinking = "thinking"
 	blockText     = "text"
 	blockTool     = "tool"
 )
+
+func ThinkingEnabled(body map[string]any) bool {
+	switch strings.ToLower(AsStr(AsMap(body["thinking"])["type"])) {
+	case "enabled", "adaptive", "auto":
+		return true
+	default:
+		return false
+	}
+}
+
+func EffortFromThinking(body map[string]any) string {
+	if !ThinkingEnabled(body) {
+		return ""
+	}
+	n, _ := AsNum(AsMap(body["thinking"])["budget_tokens"])
+	return budgetToEffort(n)
+}
 
 func ChatReasoning(v any) string {
 	if s := AsStr(v); s != "" {

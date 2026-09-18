@@ -347,40 +347,47 @@ func readVariantIDs(raw ...any) map[string]variantPair {
 	return out
 }
 
+func variantFamilyKey(id string) string {
+	if family := publicFamilyID(id); family != "" {
+		return family
+	}
+	return strings.TrimSuffix(id, "-fast")
+}
+
+func keepIfThinking(id string, want bool) string {
+	if id == "" || strings.Contains(id, "-thinking") != want {
+		return ""
+	}
+	return id
+}
+
+func filterPairsForFamily(family string, pairs map[string]variantPair) map[string]variantPair {
+	want := strings.Contains(family, "-thinking")
+	out := map[string]variantPair{}
+	for effort, pair := range pairs {
+		filtered := variantPair{standard: keepIfThinking(pair.standard, want), fast: keepIfThinking(pair.fast, want)}
+		if filtered.standard != "" || filtered.fast != "" {
+			out[effort] = filtered
+		}
+	}
+	return out
+}
+
 func indexVariants(models []Model) {
 	for _, m := range models {
+		family := variantFamilyKey(m.ID)
 		if len(m.VariantIDs) > 0 {
-			key := m.ID
-			if strings.HasSuffix(key, "-fast") {
-				key = strings.TrimSuffix(key, "-fast")
-			}
-			mergeVariantPairs(key, m.VariantIDs)
+			mergeVariantPairs(family, filterPairsForFamily(family, m.VariantIDs))
 			continue
 		}
-		base := m.ID
-		fast := strings.HasSuffix(base, "-fast")
-		if fast {
-			base = strings.TrimSuffix(base, "-fast")
-		}
-		effort := ""
-		for _, s := range effortSuffixes {
-			if strings.HasSuffix(strings.TrimSuffix(base, "-thinking"), s) || strings.HasSuffix(base, s) {
-				effort = strings.TrimPrefix(s, "-")
-				break
-			}
-		}
-		key := base
-		if effort != "" {
-			key = strings.TrimSuffix(strings.TrimSuffix(base, "-thinking"), "-"+effort)
-			key = strings.TrimSuffix(key, "-thinking")
-		}
+		effort := effortFromID(m.ID)
 		pair := variantPair{}
-		if fast {
+		if strings.HasSuffix(m.ID, "-fast") {
 			pair.fast = m.ID
 		} else {
 			pair.standard = m.ID
 		}
-		mergeVariantPairs(key, map[string]variantPair{effort: pair})
+		mergeVariantPairs(family, map[string]variantPair{effort: pair})
 	}
 }
 
@@ -404,7 +411,7 @@ func mergeVariantPairs(key string, pairs map[string]variantPair) {
 
 func lookupVariants(base string) map[string]variantPair {
 	seen := map[string]bool{}
-	keys := []string{base, publicFamilyID(base), strings.TrimSuffix(strings.TrimSuffix(base, "-fast"), "-thinking")}
+	keys := []string{base, publicFamilyID(base)}
 	if alias := grokAliasKey(base); alias != "" {
 		keys = append(keys, alias, publicFamilyID(alias))
 	}

@@ -19,6 +19,9 @@ func TestResolveRequestedModelFromSnapshot(t *testing.T) {
 	if sel.ModelID != "claude-opus-5" {
 		t.Fatalf("model id %q", sel.ModelID)
 	}
+	if selParam(sel, "thinking") != "false" {
+		t.Fatalf("thinking %q params %+v", selParam(sel, "thinking"), sel.Parameters)
+	}
 }
 
 func TestResolveFamilyFastUsesRealWireID(t *testing.T) {

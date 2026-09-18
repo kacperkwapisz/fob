@@ -1,7 +1,6 @@
 package cursor
 
 import (
-	"strings"
 	"testing"
 
 	"google.golang.org/protobuf/proto"
@@ -50,8 +49,87 @@ func TestResolveModelIDKeepsThinkingTwin(t *testing.T) {
 	if got := resolveModelID("claude-opus-5-medium", "medium"); got != "claude-opus-5-medium" {
 		t.Fatalf("non-thinking %q", got)
 	}
-	if got := resolveModelID("claude-opus-5-thinking", "medium"); !strings.Contains(got, "thinking") {
+	if got := resolveModelID("claude-opus-5-thinking", "medium"); got != "claude-opus-5-thinking-medium" {
 		t.Fatalf("thinking %q", got)
+	}
+}
+
+func selParam(sel *requestedModelSelection, id string) string {
+	if sel == nil {
+		return ""
+	}
+	for _, p := range sel.Parameters {
+		if p.ID == id {
+			return p.Value
+		}
+	}
+	return ""
+}
+
+func TestResolveRequestedModelThinkingTwin(t *testing.T) {
+	non := resolveRequestedModel("claude-opus-5", "medium")
+	if non == nil || non.ModelID != "claude-opus-5" {
+		t.Fatalf("non-thinking %+v", non)
+	}
+	if selParam(non, "thinking") != "false" || selParam(non, "effort") != "medium" {
+		t.Fatalf("non-thinking params %+v", non.Parameters)
+	}
+
+	th := resolveRequestedModel("claude-opus-5-thinking", "medium")
+	if th == nil || th.ModelID != "claude-opus-5" {
+		t.Fatalf("thinking %+v", th)
+	}
+	if selParam(th, "thinking") != "true" || selParam(th, "effort") != "medium" {
+		t.Fatalf("thinking params %+v", th.Parameters)
+	}
+
+	xhigh := resolveRequestedModel("claude-opus-5-thinking", "xhigh")
+	if selParam(xhigh, "thinking") != "true" || selParam(xhigh, "effort") != "xhigh" {
+		t.Fatalf("xhigh params %+v", xhigh.Parameters)
+	}
+
+	if resolveModelID("claude-opus-5", "medium") != "claude-opus-5-medium" {
+		t.Fatalf("wire non-thinking %q", resolveModelID("claude-opus-5", "medium"))
+	}
+	if resolveModelID("claude-opus-5-thinking", "xhigh") != "claude-opus-5-thinking-xhigh" {
+		t.Fatalf("wire thinking %q", resolveModelID("claude-opus-5-thinking", "xhigh"))
+	}
+}
+
+func TestSelectionFromBodyThinkingBlock(t *testing.T) {
+	sel := selectionFromBody(map[string]any{
+		"model":    "claude-opus-5",
+		"thinking": map[string]any{"type": "enabled", "budget_tokens": 16000.0},
+	})
+	if selParam(sel, "thinking") != "true" || selParam(sel, "effort") != "high" {
+		t.Fatalf("enabled thinking %+v", sel)
+	}
+
+	off := selectionFromBody(map[string]any{"model": "claude-opus-5", "reasoning_effort": "high"})
+	if selParam(off, "thinking") != "false" || selParam(off, "effort") != "high" {
+		t.Fatalf("effort only %+v", off)
+	}
+
+	grok := selectionFromBody(map[string]any{
+		"model":    "cursor-grok-4.6",
+		"thinking": map[string]any{"type": "enabled"},
+	})
+	if selParam(grok, "thinking") != "" {
+		t.Fatalf("grok should not grow a thinking flag %+v", grok)
+	}
+}
+
+func TestVariantIndexKeepsThinkingSeparate(t *testing.T) {
+	non := lookupVariants("claude-opus-5")
+	if non["medium"].standard != "claude-opus-5-medium" {
+		t.Fatalf("non-thinking slot %+v", non["medium"])
+	}
+	th := lookupVariants("claude-opus-5-thinking")
+	if th["medium"].standard != "claude-opus-5-thinking-medium" {
+		t.Fatalf("thinking slot %+v", th["medium"])
+	}
+	if lookupVariants("claude-opus-5")["xhigh"].standard != "" {
+		t.Fatalf("non-thinking picked up xhigh %+v", lookupVariants("claude-opus-5")["xhigh"])
 	}
 }
 
