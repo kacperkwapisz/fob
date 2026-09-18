@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -86,11 +87,32 @@ func TestLiveCursorAndGrok(t *testing.T) {
 			c.chat(t, "gpt-5.6-terra-fast", true)
 		})
 		t.Run("cursor/agentic-tools", func(t *testing.T) {
-			id := pickLiveModel(c.ids, []string{"composer-2.5", "gpt-5.6-sol", "gpt-5.6-sol-medium", "cursor/gpt-5.6-sol-medium"})
+			id := pickLiveCursorAgent(c.ids)
 			if id == "" {
 				t.Skip("no agentic cursor model listed")
 			}
-			c.agentic(t, id)
+			c.agentic(t, id, true)
+		})
+		t.Run("cursor/agentic-nostream", func(t *testing.T) {
+			id := pickLiveCursorAgent(c.ids)
+			if id == "" {
+				t.Skip("no agentic cursor model listed")
+			}
+			c.agentic(t, id, false)
+		})
+		t.Run("cursor/agentic-workspace", func(t *testing.T) {
+			id := pickLiveCursorAgent(c.ids)
+			if id == "" {
+				t.Skip("no agentic cursor model listed")
+			}
+			c.agenticWorkspace(t, id)
+		})
+		t.Run("cursor/agentic-workspace-grok", func(t *testing.T) {
+			id := pickLiveModel(c.ids, []string{"cursor-grok-4.6", "cursor-grok-4.6-fast", "cursor/cursor-grok-4.6"})
+			if id == "" {
+				t.Skip("cursor-grok-4.6 not listed")
+			}
+			c.agenticWorkspace(t, id)
 		})
 		t.Run("cursor/sol-medium-prod", func(t *testing.T) {
 			id := "gpt-5.6-sol-medium"
@@ -300,12 +322,12 @@ func (c *liveClient) chat(t *testing.T, model string, stream bool) {
 	c.chatBody(t, map[string]any{"model": model, "stream": stream, "messages": pingMessages()}, stream)
 }
 
-func (c *liveClient) agentic(t *testing.T, model string) {
-	t.Helper()
-	messages := []any{
-		map[string]any{"role": "user", "content": "Call the lookup tool with q set to ping. After the tool returns, reply with only the word pong."},
-	}
-	tools := []any{
+func pickLiveCursorAgent(ids map[string]bool) string {
+	return pickLiveModel(ids, []string{"composer-2.5", "gpt-5.6-sol", "gpt-5.6-sol-medium", "cursor/gpt-5.6-sol-medium", "composer-2.5-fast"})
+}
+
+func liveTools() []any {
+	return []any{
 		map[string]any{
 			"type": "function",
 			"function": map[string]any{
@@ -318,30 +340,66 @@ func (c *liveClient) agentic(t *testing.T, model string) {
 				},
 			},
 		},
+		map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "echo",
+				"description": "Echo a value back. Call this with v set to a previous tool result.",
+				"parameters": map[string]any{
+					"type":       "object",
+					"properties": map[string]any{"v": map[string]any{"type": "string"}},
+					"required":   []any{"v"},
+				},
+			},
+		},
 	}
-	for round := 0; round < 4; round++ {
-		res := c.do(t, http.MethodPost, "/v1/chat/completions", map[string]any{
-			"model": model, "stream": true, "messages": messages, "tools": tools,
-		}, true)
-		out := readOpenAIStream(t, res.Body)
-		_ = res.Body.Close()
-		t.Logf("%s round %d finish=%s tools=%d content=%q", model, round, out.finish, len(out.toolCalls), out.content)
+}
+
+func (c *liveClient) chatTurn(t *testing.T, model string, stream bool, session string, messages, tools []any) liveStream {
+	t.Helper()
+	body := map[string]any{
+		"model": model, "stream": stream, "messages": messages, "tools": tools,
+		"pi_session_id": session,
+	}
+	res := c.do(t, http.MethodPost, "/v1/chat/completions", body, stream)
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("status %d %s", res.StatusCode, slurp(res.Body))
+	}
+	if stream {
+		return readOpenAIStream(t, res.Body)
+	}
+	return readOpenAIJSON(t, res.Body)
+}
+
+func (c *liveClient) agentic(t *testing.T, model string, stream bool) {
+	t.Helper()
+	session := "live-agentic-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	messages := []any{
+		map[string]any{"role": "user", "content": "Call lookup with q set to ping. After the tool returns, reply with only the word pong."},
+	}
+	called := false
+	for round := 0; round < 6; round++ {
+		out := c.chatTurn(t, model, stream, session, messages, liveTools()[:1])
+		t.Logf("%s agentic stream=%v round %d finish=%s tools=%d content=%q", model, stream, round, out.finish, len(out.toolCalls), out.content)
 		if out.finish == "error" {
 			t.Fatalf("stream error %s", out.content)
 		}
-		if out.finish == "tool_calls" || len(out.toolCalls) > 0 {
-			messages = append(messages, map[string]any{
-				"role": "assistant", "content": nil, "tool_calls": out.toolCalls,
+		if len(out.toolCalls) > 0 {
+			called = true
+			messages = appendToolRound(messages, out.toolCalls, func(name, args string) string {
+				if name != "lookup" {
+					t.Fatalf("unexpected tool %s", name)
+				}
+				if !strings.Contains(args, "ping") {
+					t.Fatalf("lookup args %s", args)
+				}
+				return "pong"
 			})
-			for _, tc := range out.toolCalls {
-				m := asMap(tc)
-				messages = append(messages, map[string]any{
-					"role":         "tool",
-					"tool_call_id": asStr(m["id"]),
-					"content":      "pong",
-				})
-			}
 			continue
+		}
+		if !called {
+			t.Fatalf("model never called lookup finish=%s content=%q", out.finish, out.content)
 		}
 		if strings.TrimSpace(out.content) == "" {
 			t.Fatalf("empty agentic completion finish=%s", out.finish)
@@ -349,6 +407,62 @@ func (c *liveClient) agentic(t *testing.T, model string) {
 		return
 	}
 	t.Fatal("agentic loop did not finish")
+}
+
+func (c *liveClient) agenticWorkspace(t *testing.T, model string) {
+	t.Helper()
+	fs := newLanternWorkspace()
+	session := "live-workspace-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	messages := []any{
+		map[string]any{"role": "system", "content": "You are a coding agent. The only files that exist are in the virtual workspace tools."},
+		map[string]any{"role": "user", "content": workspacePrompt()},
+	}
+	var final string
+	for round := 0; round < 10; round++ {
+		out := c.chatTurn(t, model, true, session, messages, workspaceTools())
+		t.Logf("%s workspace round %d finish=%s tools=%d calls=%v content=%q", model, round, out.finish, len(out.toolCalls), fs.calls, out.content)
+		if out.finish == "error" {
+			t.Fatalf("stream error %s", out.content)
+		}
+		if len(out.toolCalls) > 0 {
+			messages = appendToolRound(messages, out.toolCalls, fs.handle)
+			continue
+		}
+		final = strings.TrimSpace(out.content)
+		break
+	}
+	if !fs.called("list_dir") {
+		t.Fatalf("never listed the workspace; calls=%v final=%q", fs.calls, final)
+	}
+	if !fs.called("read_file") && !fs.called("grep_files") {
+		t.Fatalf("never read/grepped files; calls=%v final=%q", fs.calls, final)
+	}
+	if !fs.called("write_file") {
+		t.Fatalf("never wrote /out/answer.txt; calls=%v final=%q", fs.calls, final)
+	}
+	written := fs.files["/out/answer.txt"]
+	if !strings.Contains(written, workspaceSecret) || !strings.Contains(written, workspaceVersion) {
+		t.Fatalf("wrote %q want %s %s; calls=%v", written, workspaceSecret, workspaceVersion, fs.calls)
+	}
+	if !strings.Contains(final, workspaceSecret) || !strings.Contains(final, workspaceVersion) {
+		t.Fatalf("final %q missing secret/version; calls=%v", final, fs.calls)
+	}
+}
+
+func appendToolRound(messages []any, toolCalls []any, handle func(name, args string) string) []any {
+	messages = append(messages, map[string]any{
+		"role": "assistant", "content": nil, "tool_calls": toolCalls,
+	})
+	for _, tc := range toolCalls {
+		m := asMap(tc)
+		fn := asMap(m["function"])
+		messages = append(messages, map[string]any{
+			"role":         "tool",
+			"tool_call_id": asStr(m["id"]),
+			"content":      handle(asStr(fn["name"]), asStr(fn["arguments"])),
+		})
+	}
+	return messages
 }
 
 func (c *liveClient) chatBody(t *testing.T, body map[string]any, stream bool) {
@@ -484,7 +598,7 @@ func readOpenAIStream(t *testing.T, body io.Reader) liveStream {
 			sawChunk = true
 		}
 		if tc := asArr(delta["tool_calls"]); len(tc) > 0 {
-			out.toolCalls = append(out.toolCalls, tc...)
+			out.toolCalls = mergeToolCallDeltas(out.toolCalls, tc)
 			sawChunk = true
 		}
 		if out.finish != "" {
@@ -501,6 +615,64 @@ func readOpenAIStream(t *testing.T, body io.Reader) liveStream {
 		t.Fatal("stream ended without [DONE]")
 	}
 	return out
+}
+
+func readOpenAIJSON(t *testing.T, body io.Reader) liveStream {
+	t.Helper()
+	var payload map[string]any
+	if err := json.NewDecoder(body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	choice := asMap(first(asArr(payload["choices"])))
+	msg := asMap(choice["message"])
+	out := liveStream{
+		finish:    asStr(choice["finish_reason"]),
+		content:   asStr(msg["content"]),
+		toolCalls: asArr(msg["tool_calls"]),
+	}
+	if out.finish == "" && len(out.toolCalls) > 0 {
+		out.finish = "tool_calls"
+	}
+	if strings.TrimSpace(out.content) == "" && len(out.toolCalls) == 0 {
+		t.Fatalf("empty completion %+v", payload)
+	}
+	return out
+}
+
+func mergeToolCallDeltas(dst, deltas []any) []any {
+	for _, raw := range deltas {
+		d := asMap(raw)
+		idx := -1
+		if n, ok := d["index"].(float64); ok {
+			idx = int(n)
+		}
+		fn := asMap(d["function"])
+		id := asStr(d["id"])
+		if idx >= 0 {
+			for idx >= len(dst) {
+				dst = append(dst, map[string]any{"type": "function", "function": map[string]any{}})
+			}
+			cur := asMap(dst[idx])
+			if id != "" {
+				cur["id"] = id
+			}
+			if typ := asStr(d["type"]); typ != "" {
+				cur["type"] = typ
+			}
+			curFn := asMap(cur["function"])
+			if name := asStr(fn["name"]); name != "" {
+				curFn["name"] = name
+			}
+			if args := asStr(fn["arguments"]); args != "" {
+				curFn["arguments"] = asStr(curFn["arguments"]) + args
+			}
+			cur["function"] = curFn
+			dst[idx] = cur
+			continue
+		}
+		dst = append(dst, d)
+	}
+	return dst
 }
 
 func assertOpenAIStream(t *testing.T, body io.Reader) {

@@ -1,10 +1,13 @@
-.PHONY: test live signoff build run tidy proto fmt vet clean
+.PHONY: test live live-agentic signoff build run tidy proto fmt vet clean
 
 test:
 	go test ./...
 
 live:
 	go test -tags live -count=1 -timeout 8m ./internal/app -run TestLiveCursorAndGrok
+
+live-agentic:
+	go test -tags live -count=1 -timeout 8m -v ./internal/app -run 'TestLiveCursorAndGrok/cursor/agentic'
 
 signoff: test
 	gh signoff create

@@ -713,14 +713,6 @@ func resumeTools(ctx context.Context, active *activeBridge, parsed ParsedMessage
 		sessionMu.Unlock()
 		return pendingToolResult(modelID, unresolved, stream), nil
 	}
-	for _, exec := range active.pending {
-		if content, ok := results[exec.toolCallID]; ok {
-			sendMcpResult(active.bridge, exec, content)
-		}
-	}
-	// Continue the same stream after tool results.
-	payload := requestPayload{blobStore: active.blobStore, mcpTools: active.mcpTools}
-	_ = payload
 	out := make(chan any, 32)
 	completionID := "chatcmpl-" + randHex(14)
 	created := time.Now().Unix()
@@ -731,6 +723,7 @@ func resumeTools(ctx context.Context, active *activeBridge, parsed ParsedMessage
 	done := make(chan struct{})
 	var once sync.Once
 	var emitMu sync.Mutex
+	var chunks []map[string]any
 	finish := func() {
 		once.Do(func() {
 			close(done)
@@ -753,10 +746,13 @@ func resumeTools(ctx context.Context, active *activeBridge, parsed ParsedMessage
 			"id": completionID, "object": "chat.completion.chunk", "created": created, "model": modelID,
 			"choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": finishReason}},
 		}
+		chunks = append(chunks, chunk)
 		if stream {
 			out <- chunk
 		}
 	}
+	// Register resume handlers before sending MCP results. Cursor can token
+	// immediately; the previous OnData is the finished first-turn handler.
 	active.bridge.OnData(func(incoming []byte) {
 		parser.Push(incoming, func(msg []byte) {
 			var server agentpb.AgentServerMessage
@@ -776,18 +772,27 @@ func resumeTools(ctx context.Context, active *activeBridge, parsed ParsedMessage
 					if c != "" {
 						joined := joiner.Push(c)
 						if joined != "" {
+							appendAssistantText(active.current, joined)
 							emit(map[string]any{"content": joined}, nil)
 						}
 					}
 				},
 				func(exec pendingExec) {
 					state.pending = append(state.pending, exec)
+					if active.current != nil {
+						active.current.Steps = append(active.current.Steps, &ParsedToolCallStep{
+							Kind: "toolCall", ToolCallID: exec.toolCallID, ToolName: exec.toolName,
+							Arguments: parseToolCallArguments(exec.decodedArgs),
+						})
+					}
 					sessionMu.Lock()
 					active.pending = state.pending
 					activeBridges[bridgeKey] = active
 					sessionMu.Unlock()
+					idx := state.toolIndex
+					state.toolIndex++
 					emit(map[string]any{"tool_calls": []any{map[string]any{
-						"index": state.toolIndex, "id": exec.toolCallID, "type": "function",
+						"index": idx, "id": exec.toolCallID, "type": "function",
 						"function": map[string]any{"name": exec.toolName, "arguments": exec.decodedArgs},
 					}}}, "tool_calls")
 					finish()
@@ -828,11 +833,19 @@ func resumeTools(ctx context.Context, active *activeBridge, parsed ParsedMessage
 		case <-done:
 		}
 	}()
+	for _, exec := range active.pending {
+		if content, ok := results[exec.toolCallID]; ok {
+			sendMcpResult(active.bridge, exec, content)
+		}
+	}
 	if stream {
 		return ChatResult{Status: 200, Stream: out}, nil
 	}
 	<-done
-	return ChatResult{Status: 200, Body: map[string]any{"id": completionID, "object": "chat.completion", "model": modelID}}, nil
+	if ctx.Err() != nil {
+		return ChatResult{Status: 499, Message: "cancelled"}, ctx.Err()
+	}
+	return collectNonStream(completionID, created, modelID, chunks, state), nil
 }
 
 func pendingToolResult(modelID string, pending []pendingExec, stream bool) ChatResult {
