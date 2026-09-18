@@ -440,7 +440,6 @@ func runStream(ctx context.Context, accessToken string, payload requestPayload, 
 	var chunks []map[string]any
 	completionID := "chatcmpl-" + randHex(14)
 	created := time.Now().Unix()
-	joiner := NewTextJoiner()
 	tags := newThinkingFilter()
 	state := &streamProtoState{}
 	var parser frameParser
@@ -495,14 +494,7 @@ func runStream(ctx context.Context, accessToken string, payload requestPayload, 
 			out <- chunk
 		}
 	}
-	emitAssistant := func(text string) {
-		content := joiner.Push(text)
-		if content == "" {
-			return
-		}
-		appendAssistantText(current, content)
-		emit(map[string]any{"content": content}, nil)
-	}
+	emitAssistant := func(text string) { emitAssistantText(current, text, emit) }
 
 	bridge.OnData(func(incoming []byte) {
 		parser.Push(incoming, func(msg []byte) {
@@ -534,7 +526,6 @@ func runStream(ctx context.Context, accessToken string, payload requestPayload, 
 					if c != "" {
 						emitAssistant(c)
 					}
-					joiner.Reset()
 					current.Steps = append(current.Steps, &ParsedToolCallStep{
 						Kind: "toolCall", ToolCallID: exec.toolCallID, ToolName: exec.toolName,
 						Arguments: parseToolCallArguments(exec.decodedArgs),
@@ -646,7 +637,6 @@ func runStream(ctx context.Context, accessToken string, payload requestPayload, 
 		if c != "" {
 			emitAssistant(c)
 		}
-		joiner.Flush()
 		if !state.turnEnded || (code != closeEOF && !state.terminalCheckpoint) {
 			dropConversation(convKey)
 			msg := closeMessage(code, state.turnEnded)
@@ -716,7 +706,6 @@ func resumeTools(ctx context.Context, active *activeBridge, parsed ParsedMessage
 	out := make(chan any, 32)
 	completionID := "chatcmpl-" + randHex(14)
 	created := time.Now().Unix()
-	joiner := NewTextJoiner()
 	tags := newThinkingFilter()
 	state := &streamProtoState{}
 	var parser frameParser
@@ -751,6 +740,7 @@ func resumeTools(ctx context.Context, active *activeBridge, parsed ParsedMessage
 			out <- chunk
 		}
 	}
+	emitAssistant := func(text string) { emitAssistantText(active.current, text, emit) }
 	// Register resume handlers before sending MCP results. Cursor can token
 	// immediately; the previous OnData is the finished first-turn handler.
 	active.bridge.OnData(func(incoming []byte) {
@@ -770,11 +760,7 @@ func resumeTools(ctx context.Context, active *activeBridge, parsed ParsedMessage
 						emit(translate.ChatReasoningDelta(r), nil)
 					}
 					if c != "" {
-						joined := joiner.Push(c)
-						if joined != "" {
-							appendAssistantText(active.current, joined)
-							emit(map[string]any{"content": joined}, nil)
-						}
+						emitAssistant(c)
 					}
 				},
 				func(exec pendingExec) {
@@ -823,11 +809,7 @@ func resumeTools(ctx context.Context, active *activeBridge, parsed ParsedMessage
 			emit(translate.ChatReasoningDelta(r), nil)
 		}
 		if c != "" {
-			joined := joiner.Push(c)
-			if joined != "" {
-				appendAssistantText(active.current, joined)
-				emit(map[string]any{"content": joined}, nil)
-			}
+			emitAssistant(c)
 		}
 		if state.turnEnded || code == closeEOF {
 			emit(map[string]any{}, "stop")
@@ -934,6 +916,14 @@ func collectNonStream(id string, created int64, model string, chunks []map[strin
 		"choices": []any{map[string]any{"index": 0, "message": msg, "finish_reason": finish}},
 		"usage":   computeUsage(state),
 	}}
+}
+
+func emitAssistantText(turn *ParsedTurn, text string, emit func(map[string]any, any)) {
+	if text == "" {
+		return
+	}
+	appendAssistantText(turn, text)
+	emit(map[string]any{"content": text}, nil)
 }
 
 func appendAssistantText(turn *ParsedTurn, text string) {

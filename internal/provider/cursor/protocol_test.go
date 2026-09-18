@@ -2,6 +2,7 @@ package cursor
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -634,6 +635,112 @@ func TestRunCursorChatStreamsThinking(t *testing.T) {
 	if translate.MessageReasoning(msg) != "hmm" || translate.AsStr(msg["content"]) != "OK" {
 		t.Fatalf("nostream %+v", nostream.Body)
 	}
+}
+
+func TestRunCursorChatKeepsMarkdownDeltas(t *testing.T) {
+	pieces := []string{
+		"No. ", "Not ", "from ", "this ", "repo,\n",
+		"and ", "not ", "with ", "this ", "App ", "as ", "it ", "is.\n",
+		"\n",
+		"| | Copilot | Bugbot |\n",
+		"|---|---|---|\n",
+		"| Requestable | yes | no |\n",
+		"\n",
+		"```\n", "js\n", "const x = 1\n", "```\n",
+		"\n",
+		"1. Become a reviewer\n",
+	}
+	want := strings.Join(pieces, "")
+	t.Setenv("CURSOR_AGENT_URL", "https://agentn.test.cursor.sh")
+	SetBridgeFactoryForTests(func(_, _, _ string, _ bool, _ ClientKind) *Bridge {
+		var onData func([]byte)
+		var onClose func(int)
+		alive := true
+		return &Bridge{
+			Write: func(frame []byte) {
+				if len(frame) < 5 {
+					return
+				}
+				var msg agentpb.AgentClientMessage
+				if err := proto.Unmarshal(frame[5:], &msg); err == nil && msg.GetRunRequest() != nil && onData != nil {
+					go func() {
+						for _, p := range pieces {
+							onData(frameConnect(mustMarshal(textDeltaMsg(p)), 0))
+						}
+						onData(frameConnect(mustMarshal(turnEndedMsg()), 0))
+						onData(frameConnect(mustMarshal(&agentpb.AgentServerMessage{
+							Message: &agentpb.AgentServerMessage_ConversationCheckpointUpdate{
+								ConversationCheckpointUpdate: &agentpb.ConversationStateStructure{},
+							},
+						}), 0))
+						if onClose != nil {
+							onClose(0)
+						}
+					}()
+				}
+			},
+			End:     func() { alive = false },
+			OnData:  func(cb func([]byte)) { onData = cb },
+			OnClose: func(cb func(int)) { onClose = cb },
+			Alive:   func() bool { return alive },
+		}
+	})
+	defer SetBridgeFactoryForTests(nil)
+	defer CleanupAllSessionState()
+
+	stream, err := RunChat(context.Background(), "tok", map[string]any{
+		"model": "composer-2.5", "messages": []any{map[string]any{"role": "user", "content": "hi"}}, "stream": true,
+	}, true, ClientCLI)
+	if err != nil || stream.Stream == nil {
+		t.Fatalf("%+v %v", stream, err)
+	}
+	if got := concatStreamContent(stream.Stream); got != want {
+		t.Fatalf("stream markdown\n got %q\nwant %q", got, want)
+	}
+
+	CleanupAllSessionState()
+	nostream, err := RunChat(context.Background(), "tok", map[string]any{
+		"model": "composer-2.5", "messages": []any{map[string]any{"role": "user", "content": "hi"}}, "stream": false,
+	}, false, ClientCLI)
+	if err != nil || nostream.Status != 200 {
+		t.Fatalf("%+v %v", nostream, err)
+	}
+	msg := translate.AsMap(translate.AsMap(translate.AsArr(translate.AsMap(nostream.Body)["choices"])[0])["message"])
+	if got := translate.AsStr(msg["content"]); got != want {
+		t.Fatalf("nostream markdown\n got %q\nwant %q", got, want)
+	}
+}
+
+func textDeltaMsg(text string) *agentpb.AgentServerMessage {
+	return &agentpb.AgentServerMessage{
+		Message: &agentpb.AgentServerMessage_InteractionUpdate{
+			InteractionUpdate: &agentpb.InteractionUpdate{
+				Message: &agentpb.InteractionUpdate_TextDelta{TextDelta: &agentpb.TextDeltaUpdate{Text: text}},
+			},
+		},
+	}
+}
+
+func turnEndedMsg() *agentpb.AgentServerMessage {
+	return &agentpb.AgentServerMessage{
+		Message: &agentpb.AgentServerMessage_InteractionUpdate{
+			InteractionUpdate: &agentpb.InteractionUpdate{
+				Message: &agentpb.InteractionUpdate_TurnEnded{TurnEnded: &agentpb.TurnEndedUpdate{}},
+			},
+		},
+	}
+}
+
+func concatStreamContent(ch <-chan any) string {
+	var b strings.Builder
+	for ev := range ch {
+		choices := translate.AsArr(translate.AsMap(ev)["choices"])
+		if len(choices) == 0 {
+			continue
+		}
+		b.WriteString(translate.AsStr(translate.AsMap(translate.AsMap(choices[0])["delta"])["content"]))
+	}
+	return b.String()
 }
 
 func mustMarshal(m proto.Message) []byte {
