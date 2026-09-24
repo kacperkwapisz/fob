@@ -206,6 +206,19 @@ func SecretView(provider, url, err string) string {
 	return gate("Paste "+provider+" key", "Create a user API key in Cursor → Integrations, then paste it here.\n        If exchange fails, use Login instead — that is the CLI subscription path.", err, b.String())
 }
 
+func OpenCodeSecretView(err string) string {
+	var b strings.Builder
+	b.WriteString(`<p><a href="https://opencode.ai/console" target="_blank" rel="noreferrer">Open OpenCode Console</a></p>`)
+	b.WriteString(`<form class="stack" method="post" action="/login/opencode/secret">
+        <label class="field">
+          <span>Service account key</span>
+          <input type="password" name="secret" autocomplete="off" required placeholder="oc_sk_…" />
+        </label>
+        <button class="btn btn-primary" type="submit">Connect</button>
+      </form>`)
+	return gate("Paste OpenCode key", "Create a service account key in OpenCode Console, then paste it here. Models list as opencode/<id>. Gemini and Jev are not proxied.", err, b.String())
+}
+
 func Dashboard(props DashboardProps) string {
 	var b strings.Builder
 	b.WriteString(`
@@ -244,9 +257,10 @@ func loginsCard(props DashboardProps) string {
 		{domain.ProviderCodex, "Codex"},
 		{domain.ProviderGrok, "Grok"},
 		{domain.ProviderCursor, "Cursor"},
+		{domain.ProviderOpenCode, "OpenCode"},
 	}
 	var b strings.Builder
-	b.WriteString(`<section class="card card-logins"><div class="card-head"><h2>Logins</h2><p class="lede">OAuth into the subscriptions you already pay for. After Claude or Codex, paste the failed localhost URL back here.</p></div><ul class="provider-list">`)
+	b.WriteString(`<section class="card card-logins"><div class="card-head"><h2>Logins</h2><p class="lede">OAuth into the subscriptions you already pay for, or paste an OpenCode Console key. After Claude or Codex, paste the failed localhost URL back here.</p></div><ul class="provider-list">`)
 	for _, p := range providers {
 		creds := byProvider[p.id]
 		pip := "pip"
@@ -274,7 +288,11 @@ func loginsCard(props DashboardProps) string {
 		if len(creds) > 0 {
 			label = "Add"
 		}
-		fmt.Fprintf(&b, `<form method="post" action="/login/%s"><button class="btn btn-primary" type="submit">%s</button></form>`, attr(string(p.id)), label)
+		if p.id == domain.ProviderOpenCode {
+			fmt.Fprintf(&b, `<form method="post" action="/login/opencode"><button class="btn btn-primary" type="submit">%s</button></form>`, label)
+		} else {
+			fmt.Fprintf(&b, `<form method="post" action="/login/%s"><button class="btn btn-primary" type="submit">%s</button></form>`, attr(string(p.id)), label)
+		}
 		if p.id == domain.ProviderCursor {
 			b.WriteString(`<form method="post" action="/login/cursor?mode=secret"><button class="btn" type="submit">Paste key</button></form>`)
 		}

@@ -809,6 +809,76 @@ func TestUnprefixedGPTStillHitsCodexWithOpenAISource(t *testing.T) {
 	}
 }
 
+func TestOpenCodePrefixRoutesAndLists(t *testing.T) {
+	var seenProvider []domain.ProviderID
+	fob, d := testFob(t, map[domain.ProviderID]provider.Executor{
+		domain.ProviderOpenCode: liveFake{
+			fakeExec: fakeExec{
+				id: domain.ProviderOpenCode, format: domain.FormatOpenAI,
+				fn: func(c domain.Credential) provider.ExecuteResult {
+					seenProvider = append(seenProvider, c.Provider)
+					return provider.ExecuteResult{OK: true, Status: 200, Body: map[string]any{
+						"id": "chatcmpl_1", "object": "chat.completion",
+						"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": "hi"}, "finish_reason": "stop"}},
+						"usage":   map[string]any{"prompt_tokens": 1.0, "completion_tokens": 1.0},
+					}}
+				},
+			},
+			byID: map[string][]domain.ModelInfo{
+				"oc1": {{ID: "opencode/kimi-k2.6", Object: "model", OwnedBy: "opencode"}},
+			},
+		},
+		domain.ProviderClaude: fakeExec{
+			id: domain.ProviderClaude, format: domain.FormatClaude,
+			models: []domain.ModelInfo{{ID: "claude-sonnet-4-6", Object: "model", OwnedBy: "claude"}},
+			fn: func(domain.Credential) provider.ExecuteResult {
+				seenProvider = append(seenProvider, domain.ProviderClaude)
+				return provider.ExecuteResult{OK: false, Status: 500}
+			},
+		},
+	})
+	defer d.Close()
+	_, _ = fob.Vault.Save(store.SaveCredential{ID: "oc1", Provider: domain.ProviderOpenCode, Label: "OpenCode", Tokens: domain.CredentialTokens{AccessToken: "oc_sk", Extra: map[string]any{"kind": "api_key"}}})
+	_, _ = fob.Vault.Save(store.SaveCredential{ID: "claude-1", Provider: domain.ProviderClaude, Label: "Claude", Tokens: domain.CredentialTokens{AccessToken: "c"}})
+	created, err := fob.Keys.Create("t", nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _ := fob.Keys.Verify(created.Secret)
+
+	result, err := Proxy(context.Background(), fob, Request{
+		Inbound: domain.InboundOpenAIChat,
+		Body:    map[string]any{"model": "opencode/claude-sonnet-4-6", "messages": []any{map[string]any{"role": "user", "content": "hi"}}},
+		Key:     *key,
+	})
+	if err != nil || !result.OK {
+		t.Fatalf("%+v %v", result, err)
+	}
+	if len(seenProvider) != 1 || seenProvider[0] != domain.ProviderOpenCode {
+		t.Fatalf("seen %v", seenProvider)
+	}
+
+	ids := map[string]bool{}
+	for _, m := range ListModels(fob) {
+		ids[m.ID] = true
+	}
+	if !ids["opencode/kimi-k2.6"] {
+		t.Fatalf("listed %+v", ids)
+	}
+
+	if ok, err := fob.Vault.Remove("oc1"); err != nil || !ok {
+		t.Fatalf("remove opencode cred: %v %v", ok, err)
+	}
+	result, err = Proxy(context.Background(), fob, Request{
+		Inbound: domain.InboundOpenAIChat,
+		Body:    map[string]any{"model": "opencode/kimi-k2.6", "messages": []any{}},
+		Key:     *key,
+	})
+	if err != nil || result.OK || result.Status != 404 {
+		t.Fatalf("want 404, got %+v err=%v", result, err)
+	}
+}
+
 func AsMap(v any) map[string]any {
 	m, _ := v.(map[string]any)
 	if m == nil {

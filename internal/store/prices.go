@@ -62,7 +62,10 @@ func (s *PriceStore) seedFromSnapshot() error {
 			return err
 		}
 	}
-	return s.upsertCursorOverlay()
+	if err := s.upsertCursorOverlay(); err != nil {
+		return err
+	}
+	return s.upsertOpenCodeOverlay()
 }
 
 func (s *PriceStore) upsertCursorOverlay() error {
@@ -75,6 +78,14 @@ func (s *PriceStore) upsertCursorOverlay() error {
 	}
 	_, err := s.db.SQL.Exec(`DELETE FROM prices WHERE provider = 'cursor' AND model IN ('cursor-auto', 'auto', 'default')`)
 	return err
+}
+
+func (s *PriceStore) upsertOpenCodeOverlay() error {
+	opencode := map[string]PriceCatalog{}
+	if err := json.Unmarshal(prices.OpenCodeJSON, &opencode); err != nil {
+		return err
+	}
+	return s.upsertCatalog(opencode, nowMs())
 }
 
 func (s *PriceStore) Get(provider, model string) *domain.ModelPrice {
@@ -157,6 +168,9 @@ func (s *PriceStore) Refresh(force bool) string {
 		return "failed"
 	}
 	if err := s.upsertCursorOverlay(); err != nil {
+		return "failed"
+	}
+	if err := s.upsertOpenCodeOverlay(); err != nil {
 		return "failed"
 	}
 	s.lastFetch = now

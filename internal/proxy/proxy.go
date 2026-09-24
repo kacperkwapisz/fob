@@ -107,10 +107,11 @@ func Proxy(ctx context.Context, fob *Fob, req Request) (Result, error) {
 			continue
 		}
 		inboundBody := req.Body
-		if req.Inbound == domain.InboundOpenAIResponses && hop.Provider != domain.ProviderCodex {
+		execFormat := provider.FormatFor(executor, hop.Model)
+		if req.Inbound == domain.InboundOpenAIResponses && execFormat != domain.FormatCodex {
 			inboundBody = translate.FlattenCodexMultiAgent(req.Body)
 		}
-		translated := translate.TranslateRequest(req.Inbound, executor.Format(), hop.Model, req.Stream, inboundBody)
+		translated := translate.TranslateRequest(req.Inbound, execFormat, hop.Model, req.Stream, inboundBody)
 		creds, err := pickCredentials(fob, hop.Provider, hop.Model, req.Key.ID, req.StickyID)
 		if err != nil {
 			return Result{}, err
@@ -179,7 +180,7 @@ func Proxy(ctx context.Context, fob *Fob, req Request) (Result, error) {
 					sentDone := false
 					for chunk := range result.Stream {
 						firstByte = true
-						lines := translate.TranslateStream(req.Inbound, executor.Format(), hop.Model, req.Body, chunk, &state)
+						lines := translate.TranslateStream(req.Inbound, execFormat, hop.Model, req.Body, chunk, &state)
 						for _, line := range lines {
 							if line == "data: [DONE]" {
 								sentDone = true
@@ -206,7 +207,7 @@ func Proxy(ctx context.Context, fob *Fob, req Request) (Result, error) {
 				}()
 				return Result{OK: true, Status: 200, Stream: out}, nil
 			}
-			body := translate.TranslateResponse(req.Inbound, executor.Format(), hop.Model, req.Body, result.Body)
+			body := translate.TranslateResponse(req.Inbound, execFormat, hop.Model, req.Body, result.Body)
 			pt, ct, cr, cw := usageFrom(body, result.Body)
 			httpx.LogOK(string(hop.Provider), hop.Model, route)
 			httpx.DumpTrace(ctx, false, fmt.Sprintf("%s/%s ok", hop.Provider, hop.Model))
@@ -241,9 +242,14 @@ func ListModels(fob *Fob) []domain.ModelInfo {
 	var native []domain.ProviderID
 	cursorOn := false
 	var openaiOn []domain.Credential
+	var opencodeOn []domain.Credential
 	for _, c := range creds {
-		if c.Provider == domain.ProviderOpenAI {
+		switch c.Provider {
+		case domain.ProviderOpenAI:
 			openaiOn = append(openaiOn, c)
+			continue
+		case domain.ProviderOpenCode:
+			opencodeOn = append(opencodeOn, c)
 			continue
 		}
 		if seenProv[c.Provider] {
@@ -301,6 +307,15 @@ func ListModels(fob *Fob) []domain.ModelInfo {
 			}(c)
 		}
 		wg.Wait()
+	}
+	if len(opencodeOn) > 0 {
+		if live, ok := fob.Executors[domain.ProviderOpenCode].(liveModels); ok {
+			ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+			defer cancel()
+			add(live.ModelsFor(ctx, opencodeOn[0]))
+		} else if ex := fob.Executors[domain.ProviderOpenCode]; ex != nil {
+			add(ex.Models())
+		}
 	}
 	if models == nil {
 		models = []domain.ModelInfo{}
@@ -394,6 +409,12 @@ func pickCredentials(fob *Fob, providerID domain.ProviderID, model, keyID, stick
 }
 
 func resolveProviderChain(fob *Fob, rawModel string) []hop {
+	if strings.HasPrefix(rawModel, "opencode/") {
+		if opencodeConnected(fob) {
+			return []hop{{domain.ProviderOpenCode, rawModel}}
+		}
+		return nil
+	}
 	if hops := openaiSourceHops(fob, rawModel); len(hops) > 0 {
 		return hops
 	}
@@ -449,7 +470,7 @@ func resolveProviderChain(fob *Fob, rawModel string) []hop {
 	}
 	creds, _ := fob.Vault.List()
 	for _, c := range creds {
-		if c.Provider == domain.ProviderOpenAI {
+		if c.Provider == domain.ProviderOpenAI || c.Provider == domain.ProviderOpenCode {
 			continue
 		}
 		ex := fob.Executors[c.Provider]
@@ -463,6 +484,11 @@ func resolveProviderChain(fob *Fob, rawModel string) []hop {
 		}
 	}
 	return nil
+}
+
+func opencodeConnected(fob *Fob) bool {
+	list, _ := fob.Vault.List(domain.ProviderOpenCode)
+	return len(list) > 0
 }
 
 func openaiSourceHops(fob *Fob, model string) []hop {
@@ -594,18 +620,19 @@ func usageFrom(translated, upstream any) (pt, ct, cr, cw int64) {
 
 func record(fob *Fob, req Request, providerID domain.ProviderID, model string, started int64, status string, pt, ct, cr, cw int64, routed string) {
 	priceProvider := map[domain.ProviderID]string{
-		domain.ProviderClaude: "anthropic",
-		domain.ProviderCodex:  "openai",
-		domain.ProviderGrok:   "xai",
-		domain.ProviderCursor: "cursor",
-		domain.ProviderOpenAI: "openai",
+		domain.ProviderClaude:   "anthropic",
+		domain.ProviderCodex:    "openai",
+		domain.ProviderGrok:     "xai",
+		domain.ProviderCursor:   "cursor",
+		domain.ProviderOpenAI:   "openai",
+		domain.ProviderOpenCode: "opencode",
 	}[providerID]
 	meterModel := model
 	if routed != "" {
 		meterModel = routed
 	}
 	usd := fob.Prices.Estimate(priceProvider, meterModel, pt, ct, cr, cw)
-	if usd == 0 && providerID == domain.ProviderOpenAI {
+	if usd == 0 && (providerID == domain.ProviderOpenAI || providerID == domain.ProviderOpenCode) {
 		if i := strings.Index(meterModel, "/"); i >= 0 {
 			usd = fob.Prices.Estimate(priceProvider, meterModel[i+1:], pt, ct, cr, cw)
 		}

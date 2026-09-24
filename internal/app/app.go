@@ -15,6 +15,7 @@ import (
 	cursorexec "github.com/kacperkwapisz/fob/internal/provider/cursor"
 	grokexec "github.com/kacperkwapisz/fob/internal/provider/grok"
 	openaiexec "github.com/kacperkwapisz/fob/internal/provider/openai"
+	opencodeexec "github.com/kacperkwapisz/fob/internal/provider/opencode"
 	"github.com/kacperkwapisz/fob/internal/proxy"
 	"github.com/kacperkwapisz/fob/internal/store"
 )
@@ -54,11 +55,12 @@ func Create(source map[string]string) (*Booted, error) {
 		Prices:   prices,
 		Settings: settings,
 		Executors: map[domain.ProviderID]provider.Executor{
-			domain.ProviderClaude: claudeexec.Executor{ClientID: e.ClaudeClientID},
-			domain.ProviderCodex:  codexexec.Executor{ClientID: e.CodexClientID},
-			domain.ProviderGrok:   grokexec.Executor{ClientID: e.GrokClientID},
-			domain.ProviderCursor: &cursorexec.Executor{},
-			domain.ProviderOpenAI: openaiexec.NewExecutor(),
+			domain.ProviderClaude:   claudeexec.Executor{ClientID: e.ClaudeClientID},
+			domain.ProviderCodex:    codexexec.Executor{ClientID: e.CodexClientID},
+			domain.ProviderGrok:     grokexec.Executor{ClientID: e.GrokClientID},
+			domain.ProviderCursor:   &cursorexec.Executor{},
+			domain.ProviderOpenAI:   openaiexec.NewExecutor(),
+			domain.ProviderOpenCode: opencodeexec.NewExecutor(),
 		},
 	}
 	httpx.SetLogLevel(string(e.LogLevel))

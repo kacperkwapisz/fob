@@ -14,6 +14,7 @@ import (
 	"github.com/kacperkwapisz/fob/internal/domain"
 	"github.com/kacperkwapisz/fob/internal/httpx"
 	"github.com/kacperkwapisz/fob/internal/provider"
+	"github.com/kacperkwapisz/fob/internal/provider/opencode"
 	"github.com/kacperkwapisz/fob/internal/proxy"
 	"github.com/kacperkwapisz/fob/internal/store"
 )
@@ -282,7 +283,7 @@ func TestMintRedirectsWithoutSecret(t *testing.T) {
 	pageReq.Header.Set("cookie", session)
 	booted.Handler.ServeHTTP(pageRes, pageReq)
 	html := pageRes.Body.String()
-	for _, want := range []string{"opencode", "sk-fob-", "Logins", "Keys", "Meter", "Usage Trends", "Cursor", "OpenAI-compatible", "Add source"} {
+	for _, want := range []string{"opencode", "sk-fob-", "Logins", "Keys", "Meter", "Usage Trends", "Cursor", "OpenCode", "OpenAI-compatible", "Add source"} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("missing %q", want)
 		}
@@ -692,4 +693,40 @@ func jsonResp(status int, body any) *http.Response {
 	res := rec.Result()
 	res.Body = io.NopCloser(strings.NewReader(string(raw)))
 	return res
+}
+
+func TestOpenCodeSecretConnect(t *testing.T) {
+	booted, session := unlocked(t)
+	defer booted.DB.Close()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			http.NotFound(w, r)
+			return
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer oc_sk_test" {
+			http.Error(w, "auth", 401)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"kimi-k2.6","object":"model"}]}`))
+	}))
+	defer srv.Close()
+
+	prev := opencode.SetInferenceRootForTest(srv.URL)
+	defer opencode.SetInferenceRootForTest(prev)
+
+	form := url.Values{"secret": {"oc_sk_test"}}
+	req := httptest.NewRequest(http.MethodPost, "/login/opencode/secret", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Cookie", session)
+	res := httptest.NewRecorder()
+	booted.Handler.ServeHTTP(res, req)
+	if res.Code != http.StatusSeeOther {
+		t.Fatalf("status %d body %s", res.Code, res.Body.String())
+	}
+	creds, err := booted.Fob.Vault.List(domain.ProviderOpenCode)
+	if err != nil || len(creds) != 1 || creds[0].Tokens.AccessToken != "oc_sk_test" {
+		t.Fatalf("%+v %v", creds, err)
+	}
 }

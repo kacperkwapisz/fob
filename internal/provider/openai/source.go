@@ -105,7 +105,7 @@ func ValidSlug(s string) bool {
 
 func ReservedSlug(s string) bool {
 	switch s {
-	case "claude", "codex", "grok", "cursor", "openai", "fob", "v1",
+	case "claude", "codex", "grok", "cursor", "openai", "opencode", "fob", "v1",
 		"gpt", "o1", "o3", "o4", "composer", "gemini", "kimi", "glm":
 		return true
 	default:

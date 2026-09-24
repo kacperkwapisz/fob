@@ -3,18 +3,19 @@ package domain
 type ProviderID string
 
 const (
-	ProviderClaude ProviderID = "claude"
-	ProviderCodex  ProviderID = "codex"
-	ProviderGrok   ProviderID = "grok"
-	ProviderCursor ProviderID = "cursor"
-	ProviderOpenAI ProviderID = "openai"
+	ProviderClaude   ProviderID = "claude"
+	ProviderCodex    ProviderID = "codex"
+	ProviderGrok     ProviderID = "grok"
+	ProviderCursor   ProviderID = "cursor"
+	ProviderOpenAI   ProviderID = "openai"
+	ProviderOpenCode ProviderID = "opencode"
 )
 
-var Providers = []ProviderID{ProviderClaude, ProviderCodex, ProviderGrok, ProviderCursor, ProviderOpenAI}
+var Providers = []ProviderID{ProviderClaude, ProviderCodex, ProviderGrok, ProviderCursor, ProviderOpenAI, ProviderOpenCode}
 
 func IsProviderID(v string) bool {
 	switch ProviderID(v) {
-	case ProviderClaude, ProviderCodex, ProviderGrok, ProviderCursor, ProviderOpenAI:
+	case ProviderClaude, ProviderCodex, ProviderGrok, ProviderCursor, ProviderOpenAI, ProviderOpenCode:
 		return true
 	default:
 		return false

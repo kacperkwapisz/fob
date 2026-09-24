@@ -31,6 +31,19 @@ type Executor interface {
 	Refresh(ctx context.Context, credential domain.Credential) (domain.Credential, error)
 }
 
+// ModelFormatter is optional. When present, Proxy picks the translator format per model
+// (OpenCode serves chat, responses, and Anthropic messages from one Credential).
+type ModelFormatter interface {
+	FormatFor(model string) domain.ExecutorFormat
+}
+
+func FormatFor(ex Executor, model string) domain.ExecutorFormat {
+	if mf, ok := ex.(ModelFormatter); ok {
+		return mf.FormatFor(model)
+	}
+	return ex.Format()
+}
+
 func IsRetryableStatus(status int) bool {
 	switch status {
 	case 401, 408, 429, 500, 502, 503, 504:

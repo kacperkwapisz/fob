@@ -12,6 +12,7 @@ import (
 	"github.com/kacperkwapisz/fob/internal/oauth"
 	"github.com/kacperkwapisz/fob/internal/panel"
 	"github.com/kacperkwapisz/fob/internal/provider/openai"
+	"github.com/kacperkwapisz/fob/internal/provider/opencode"
 	"github.com/kacperkwapisz/fob/internal/proxy"
 	"github.com/kacperkwapisz/fob/internal/session"
 	"github.com/kacperkwapisz/fob/internal/store"
@@ -171,18 +172,42 @@ func registerPanel(mux *httpx.Mux, fob *proxy.Fob, e *env.Env, panelAuth *store.
 			return
 		}
 		providerID := domain.ProviderID(httpx.Param(r, "provider"))
-		if providerID != domain.ProviderCursor {
+		body, _ := httpx.ParseBody(r)
+		secret := httpx.FormString(body, "secret")
+		switch providerID {
+		case domain.ProviderCursor:
+			result, err := logins[providerID].Complete(r.Context(), "", "", "", secret)
+			if err != nil {
+				page(w, panel.SecretView("cursor", "https://cursor.com/dashboard?tab=integrations", err.Error()), "Fob — cursor", "")
+				return
+			}
+			_, _ = fob.Vault.Save(store.SaveCredential{Provider: result.Provider, Label: result.Label, Tokens: result.Tokens, ExpiresAt: result.ExpiresAt})
+		case domain.ProviderOpenCode:
+			label, err := opencode.ValidateKey(r.Context(), secret)
+			if err != nil {
+				page(w, panel.OpenCodeSecretView(err.Error()), "Fob — opencode", "")
+				return
+			}
+			_, _ = fob.Vault.Save(store.SaveCredential{
+				Provider: domain.ProviderOpenCode,
+				Label:    label,
+				Tokens: domain.CredentialTokens{
+					AccessToken: strings.TrimSpace(secret),
+					Extra:       opencode.CredentialExtra(),
+				},
+			})
+		default:
 			httpx.SeeOther(w, "/", "")
 			return
 		}
-		body, _ := httpx.ParseBody(r)
-		result, err := logins[providerID].Complete(r.Context(), "", "", "", httpx.FormString(body, "secret"))
-		if err != nil {
-			page(w, panel.SecretView("cursor", "https://cursor.com/dashboard?tab=integrations", err.Error()), "Fob — cursor", "")
+		httpx.SeeOther(w, "/", "")
+	})
+	mux.Handle(http.MethodPost, "/login/opencode", func(w http.ResponseWriter, r *http.Request) {
+		if !panelAuthed(r, e, panelAuth) {
+			httpx.SeeOther(w, "/", "")
 			return
 		}
-		_, _ = fob.Vault.Save(store.SaveCredential{Provider: result.Provider, Label: result.Label, Tokens: result.Tokens, ExpiresAt: result.ExpiresAt})
-		httpx.SeeOther(w, "/", "")
+		page(w, panel.OpenCodeSecretView(""), "Fob — opencode", "")
 	})
 	mux.Handle(http.MethodPost, "/device/{provider}", func(w http.ResponseWriter, r *http.Request) {
 		if !panelAuthed(r, e, panelAuth) {
@@ -368,6 +393,8 @@ func dashboard(fob *proxy.Fob, settings *store.SettingsStore) string {
 				Host:  openai.SourceHost(c),
 				Slug:  openai.SourceSlug(c),
 			})
+		case domain.ProviderOpenCode:
+			// counted with credentials list in the OpenCode login row
 		}
 	}
 	return panel.Dashboard(panel.DashboardProps{
